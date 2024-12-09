@@ -4,6 +4,7 @@
  */
 
 #pragma once
+#include <stdint.h>
 #include "lib.hh"
 
 volatile bool __radioDidIRQ = false;
@@ -42,8 +43,8 @@ struct radio_parameters_t {
     float frequency;
     uint16_t preambleLength;
 
-    // A largura de banda, em bps.
-    uint32_t bandwidth;
+    // A largura de banda, em kHz.
+    float bandwidth;
 
     // O fator de espalhamento, ou `spreading factor`, de 7 a 12
     uint8_t sf;
@@ -95,9 +96,25 @@ radio_error_t radioSend(uint8_t *message, uint8_t size) {
 /**
  * Aguarda até que um pacote seja recebido, ou ocorra timeout,
  * retornando o resultado da operação.
+ * Recebe em `*length` o tamanho do buffer de destino e, após a 
+ * operação, armazezna o tamanho do pacote lido.
  */
 radio_error_t radioRecv(uint8_t *dest, uint8_t *length, uint32_t timeout = 0) {
-    // TODO: Recv
+    int16_t status = radio.startReceive(timeout);
+    radio_error_t error = convertError(status);
+
+    // Não aguarda até o fim da operação caso ocorra um erro.
+    if (error != kNone)
+        return error;
+
+    size_t msgLength = radio.getPacketLength();
+    
+    // Evitar buffer overflow
+    if (*length < msgLength) 
+        *length = msgLength;
+
+    status = radio.readData(dest, *length);
+    return convertError(status);
 }
 
 /**
@@ -126,5 +143,10 @@ float radioSNR() {
  * Atualiza os parâmetros do radiotransmissor.
  */
 void radioSetParameters(radio_parameters_t &param) {
+    radio.setFrequency(param.frequency);
+    radio.setBandwidth(param.bandwidth);
+    radio.setSpreadingFactor(param.sf);
+    radio.setCodingRate(param.cr);
+    radio.setCRC(param.crc);
     // TODO
 }
