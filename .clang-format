@@ -1,0 +1,6 @@
+BasedOnStyle: Google
+IndentWidth: 4
+UseTab: Never
+AllowShortFunctionsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: false
+IndentCaseLabels: false
