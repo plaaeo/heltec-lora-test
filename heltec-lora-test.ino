@@ -12,9 +12,7 @@ void loop() {
     halLoop();
     uiLoop();
 
-    // Desenhar textos estáticos
-    uiStatic();
-
+    // Desenhar textos alinhados
     uiAlign(kLeft);
     uiText(0, 0, "Esquerda!");
 

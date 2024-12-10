@@ -96,11 +96,6 @@ int16_t uiAlignX(int16_t x, int16_t w = 0) {
     return x;
 }
 
-/// Prepara para desenhar um item estático na interface.
-void uiStatic() {
-    display.setColor(WHITE);
-}
-
 /// Desenha uma caixa de item selecionável na interface de usuário.
 /// Caso este item tenha sido pressionado no último frame, retorna `true`.
 bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
@@ -111,11 +106,6 @@ bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
         x = uiAlignX(x, w);
         display.setColor(WHITE);
         display.fillRect(x, y, w, h);
-
-        // Inverte a cor dos próximos elementos
-        display.setColor(BLACK);
-    } else {
-        display.setColor(WHITE);
     }
 
     _uiState.items++;
@@ -126,6 +116,7 @@ bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
 
 /// Desenha um texto na interface de usuário.
 void uiText(int16_t x, int16_t y, const String& text) {
+    display.setColor(INVERSE);
     display.drawString(x, y, text);
 };
 
@@ -142,6 +133,7 @@ bool uiButton(int16_t x, int16_t y, const String& text) {
 /// Desenha uma checkbox na interface.
 void uiCheckbox(int16_t x, int16_t y, bool filled) {
     x = uiAlignX(x, 6);
+    display.setColor(INVERSE);
     display.drawRect(x, y, 6, 6);
 
     if (filled)
