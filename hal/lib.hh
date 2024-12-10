@@ -8,3 +8,16 @@
 
 #pragma once
 #include <heltec_unofficial.h>
+
+/// Inicializa a biblioteca `heltec_unofficial`.
+///
+/// Deve ser executado antes de qualquer função de inicialização
+/// dos módulos no diretório `hal`.
+void halInit() {
+    heltec_setup();
+};
+
+/// Executa quaisquer funções sejam necessárias no loop.
+void halLoop() {
+    heltec_loop();
+};

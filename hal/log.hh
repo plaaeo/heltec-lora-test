@@ -8,8 +8,8 @@
 #include <stdio.h>
 
 /// Inicializa o datalogger, preparando-o para gravar dados
-/// em um arquivo de nome aleatório.
-void logInit() {
+/// em um arquivo, dado o nome.
+void logInit(const char* filename) {
     // TODO
 }
 
@@ -22,7 +22,12 @@ int logPrintf(const char* format, ...) {
 
     char buffer[1024];
     int res = vsnprintf(buffer, sizeof(buffer) / sizeof(char), format, list);
+
     // TODO: Imprimir `buffer` no arquivo
+    if (Serial) {
+        Serial.print("[hal/log.hh] ");
+        Serial.println(buffer);
+    }
 
     va_end(list);
 

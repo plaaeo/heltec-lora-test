@@ -108,6 +108,7 @@ radio_error_t radioSend(uint8_t* message, uint8_t size) {
 
     // Aguarda o pacote ser enviado completamente.
     while (!__radioDidIRQ);
+    __radioDidIRQ = false;
 
     status = radio.finishTransmit();
     return _radioConvertError(status);
@@ -124,6 +125,10 @@ radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint32_t timeout = 0) {
     // Não aguarda até o fim da operação caso ocorra um erro.
     if (error != kNone)
         return error;
+
+    // Aguarda o pacote ser recebido, ou o timeout.
+    while (!__radioDidIRQ);
+    __radioDidIRQ = false;
 
     size_t msgLength = radio.getPacketLength();
 
