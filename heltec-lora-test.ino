@@ -4,6 +4,8 @@
 #include "hal/ui.hh"
 
 void setup() {
+    Serial.begin(115200);
+    
     halInit();
     uiSetup();
 }
@@ -14,36 +16,36 @@ void loop() {
 
     // Desenhar textos alinhados
     uiAlign(kLeft);
-    uiText(0, 0, "Esquerda!");
+    uiText(0, 0, "Esq.");
 
     uiAlign(kCenter);
-    uiText(0, 10, "Centro!");
+    uiText(0, 0, "Centro!");
 
     uiAlign(kRight);
-    uiText(0, 20, "Direita!");
+    uiText(0, 0, "Dir.");
 
     // Desenhar indicador do texto pressionado
     static String pressionado = "(Um)";
     uiAlign(kRight);
-    uiText(0, 30, pressionado);
+    uiText(0, 10, pressionado);
 
     // Desenhar botões
     uiAlign(kCenter);
 
-    if (uiButton(-64, 45, "Um"))
+    if (uiButton(-16, 25, "Um"))
         pressionado = "(Um)";
 
-    if (uiButton(64, 45, "Outro"))
+    if (uiButton(16, 25, "Outro"))
         pressionado = "(Outro)";
 
     static bool checado = false;
     uiAlign(kCenter);
 
-    if (uiItem(-40, 55, 80, 10))
+    if (uiItem(0, 40, 30, 10))
         checado = !checado;
 
-    uiCheckbox(-41, 56, checado);
-    uiText(-41 + 15, 56, "Oii");
+    uiCheckbox(-6, 41, checado);
+    uiText(6, 39, "Oii");
 
     uiFinish();
 }

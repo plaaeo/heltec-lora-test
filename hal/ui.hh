@@ -32,22 +32,6 @@ static struct {
 /// Determina o alinhamento dos próximos itens a serem desenhados na interface.
 void uiAlign(alignment_t align) {
     _uiState.alignment = align;
-
-    // Converter para enum da biblioteca
-    auto textAlign = TEXT_ALIGN_LEFT;
-    switch (align) {
-    case kLeft:
-        textAlign = TEXT_ALIGN_LEFT;
-        break;
-    case kCenter:
-        textAlign = TEXT_ALIGN_CENTER;
-        break;
-    case kRight:
-        textAlign = TEXT_ALIGN_RIGHT;
-        break;
-    }
-
-    display.setTextAlignment(textAlign);
 }
 
 /// Inicializa a interface com um estado padrão.
@@ -64,6 +48,8 @@ void uiSetup() {
 
 /// Atualiza o estado da interface dependendo da entrada do usuário.
 void uiLoop() {
+    uiUpdateButton();
+    
     if (uiSelectNext())
         _uiState.selection++;
 
@@ -72,7 +58,8 @@ void uiLoop() {
 
     // Previne a seleção de itens inválidos, voltando ao primeiro item
     // caso o usuário tente selecionar um após o último.
-    _uiState.selection %= _uiState.items;
+    if (_uiState.items > 0)
+        _uiState.selection %= _uiState.items;
 
     _uiState.wasPressed = uiPressed();
     _uiState.items = 0;
@@ -117,6 +104,13 @@ bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
 /// Desenha um texto na interface de usuário.
 void uiText(int16_t x, int16_t y, const String& text) {
     display.setColor(INVERSE);
+    
+    // Alinhar horizontalmente
+    int16_t w = display.getStringWidth(text);
+    x = uiAlignX(x, w);
+
+    // Não conflitar com o alinhamento da biblioteca
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(x, y, text);
 };
 
@@ -125,19 +119,31 @@ void uiText(int16_t x, int16_t y, const String& text) {
 bool uiButton(int16_t x, int16_t y, const String& text) {
     int16_t w = display.getStringWidth(text);
 
-    bool pressed = uiItem(x - 1, y - 1, w + 2, 12);
-    uiText(x, y, text);
+    bool pressed = uiItem(x, y, w + 2, 10);
+    
+    // Centralizar texto no botão
+    switch (_uiState.alignment) {
+    case kLeft:
+        x += 1;
+        break;
+    case kRight:
+        x -= 1;
+        break;
+    }
+    
+    uiText(x, y - 2, text);
+    
     return pressed;
 }
 
 /// Desenha uma checkbox na interface.
 void uiCheckbox(int16_t x, int16_t y, bool filled) {
-    x = uiAlignX(x, 6);
+    x = uiAlignX(x, 8);
     display.setColor(INVERSE);
-    display.drawRect(x, y, 6, 6);
+    display.drawRect(x, y, 8, 8);
 
     if (filled)
-        display.fillRect(x + 2, y + 2, 2, 2);
+        display.fillRect(x + 2, y + 2, 4, 4);
 }
 
 /// Finaliza o frame atual e desenha a interface no OLED.
