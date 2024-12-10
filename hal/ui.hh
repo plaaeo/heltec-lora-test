@@ -141,7 +141,7 @@ bool uiButton(int16_t x, int16_t y, const String& text) {
 
 /// Desenha uma checkbox na interface.
 void uiCheckbox(int16_t x, int16_t y, bool filled) {
-    x = uiAlignX(x);
+    x = uiAlignX(x, 6);
     display.drawRect(x, y, 6, 6);
 
     if (filled)
