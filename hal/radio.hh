@@ -92,6 +92,7 @@ struct radio_parameters_t {
 /// Inicializa o radio LoRa.
 /// Retorna `true` caso o radio tenha inicializado com sucesso.
 bool radioInit() {
+    radio.begin();
     radio.setDio1Action(__radioIRQ);
     return true;
 }
@@ -142,7 +143,7 @@ radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint32_t timeout = 0) {
 
 /// Retorna o tempo esperado de transmissão, em millisegundos, dados
 /// os parâmetros definidos e o comprimento do pacote a ser medido.
-uint32_t radioTransmitTime(uint32_t packetLength) {
+uint64_t radioTransmitTime(uint32_t packetLength) {
     return radio.getTimeOnAir(packetLength);
 }
 
