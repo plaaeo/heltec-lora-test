@@ -65,7 +65,10 @@ void uiLoop() {
     _uiState.items = 0;
     _uiState.nextItem = 0;
     uiAlign(kLeft);
+}
 
+/// Limpa a tela da interface, preparando um novo frame.
+void uiClear() {
     display.clear();
 }
 

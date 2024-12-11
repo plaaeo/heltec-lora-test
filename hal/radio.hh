@@ -87,6 +87,9 @@ struct radio_parameters_t {
     /// Comprimento padrão do pacote. Caso maior que 0, o modo de header
     /// implícito é ligado.
     uint32_t packetLength;
+
+    /// O byte usado como "endereço" de cada pacote.
+    uint8_t syncWord;
 };
 
 /// Inicializa o radio LoRa.
@@ -99,8 +102,8 @@ bool radioInit() {
 
 /// Envia um pacote e aguarda ele terminar de ser enviado,
 /// retornando o resultado da transmissão.
-radio_error_t radioSend(uint8_t* message, uint8_t size) {
-    int16_t status = radio.startTransmit(message, size);
+radio_error_t radioSend(const uint8_t* message, uint8_t size) {
+    int16_t status = radio.startTransmit((uint8_t *) message, size);
     radio_error_t error = _radioConvertError(status);
 
     // Não aguarda o fim da transmissão caso ocorra um erro.
@@ -112,15 +115,17 @@ radio_error_t radioSend(uint8_t* message, uint8_t size) {
     __radioDidIRQ = false;
 
     status = radio.finishTransmit();
+    radio.standby();
     return _radioConvertError(status);
 }
 
-/// Aguarda até que um pacote seja recebido, ou ocorra timeout,
+/// Aguarda até que um pacote seja recebido, ou ocorra timeout (passado em microsegundos),
 /// retornando o resultado da operação.
 /// Recebe em `*length` o tamanho do buffer de destino e, após a
 /// operação, armazezna o tamanho do pacote lido.
-radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint32_t timeout = 0) {
-    int16_t status = radio.startReceive(timeout);
+radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
+    auto timeoutReal = radio.calculateRxTimeout(timeout);
+    int16_t status = radio.startReceive(timeoutReal);
     radio_error_t error = _radioConvertError(status);
 
     // Não aguarda até o fim da operação caso ocorra um erro.
@@ -138,6 +143,7 @@ radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint32_t timeout = 0) {
         *length = msgLength;
 
     status = radio.readData(dest, *length);
+    radio.standby();
     return _radioConvertError(status);
 }
 
@@ -159,6 +165,7 @@ float radioSNR() {
 
 /// Atualiza os parâmetros do radiotransmissor.
 void radioSetParameters(radio_parameters_t& param) {
+    radio.autoLDRO();
     radio.setFrequency(param.frequency);
     radio.setBandwidth(param.bandwidth);
     radio.setSpreadingFactor(param.sf);
@@ -166,6 +173,12 @@ void radioSetParameters(radio_parameters_t& param) {
     radio.setCRC(param.crc);
     radio.setPreambleLength(param.preambleLength);
     radio.setRxBoostedGainMode(param.boostedRxGain);
-    radio.implicitHeader(param.packetLength);
+
+    if (param.packetLength > 0)
+        radio.implicitHeader(param.packetLength);
+    else
+        radio.explicitHeader();
+    
     radio.invertIQ(param.invertIq);
+    radio.setSyncWord(param.syncWord);
 }
