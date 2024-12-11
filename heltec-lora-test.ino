@@ -7,7 +7,7 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal
-#define BUDGET 200000
+#define BUDGET 300000
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
 #define TX_DELAY 80000
@@ -50,6 +50,7 @@ enum role_t {
 
 void setup() {
     Serial.begin(115200);
+    SPI.begin(SCK, MISO, MOSI, SS);
 
     halInit();
     radioInit();
@@ -315,6 +316,9 @@ void rxLoop() {
             return;
         }
 
+        // Iniciar datalogger
+        logInit("/log.txt");
+
         // Atualizar parâmetros do teste e iniciar o experimento.
         _currentTest = message[0];
         updateTestParameters();
@@ -339,23 +343,18 @@ void rxLoop() {
         
         const auto error = radioRecv(message, &length, toa + (4 * TX_DELAY / 2));
 
-        Serial.print(timerTime() - _begin);
-        Serial.print(",");
-        Serial.print(_currentTest);
-        Serial.print(",");
-        Serial.print(_messageIndex);
-        Serial.print(",SF");
-        Serial.print(_parameters.sf);
-        Serial.print(",CR");
-        Serial.print(_parameters.cr);
-        Serial.print(",");
-        Serial.print(_parameters.bandwidth);
-        Serial.print("kHz,");
-        Serial.print(radioRSSI());
-        Serial.print("dBm,");
-        Serial.print(radioSNR());
-        Serial.print("dB,");
-        Serial.println(error);
+        logPrintf(
+            "%llu,%u,%u,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
+            timerTime() - _begin,
+            _currentTest,
+            _messageIndex,
+            _parameters.sf,
+            _parameters.cr,
+            _parameters.bandwidth,
+            radioRSSI(),
+            radioSNR(),
+            error
+        );
 
         _messageIndex++;
 
@@ -367,6 +366,11 @@ void rxLoop() {
             // Marcar o timer para resincronização e iniciar próximo teste
             _protoState = updateTestParameters() ? kFinished : kRunning;
             timerResync(radioTransmitTime(_messageLength) + BUDGET);
+
+            // Terminar log
+            if (_protoState == kFinished) {
+                logClose();
+            }
         }
 
         // Atualizar interface após receber

@@ -6,11 +6,37 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <SPI.h>
+#include <SD.h>
+
+#define SD_SCK 2
+#define SD_MISO 1
+#define SD_MOSI 3
+#define SD_CS 4
+
+SPIClass _spiSd = SPIClass(FSPI);
+File _file;
 
 /// Inicializa o datalogger, preparando-o para gravar dados
 /// em um arquivo, dado o nome.
-void logInit(const char* filename) {
-    // TODO
+bool logInit(const char* filename) {
+    _spiSd.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    pinMode(_spiSd.pinSS(), OUTPUT);
+
+    // Inicializar biblioteca do SD
+    if (!SD.begin(SD_CS, _spiSd)) {
+        Serial.println("[hal/log.hh] Não foi possível inicializar o datalogger.");
+        return false;
+    }
+
+    // Abrir arquivo especificado
+    _file = SD.open(filename, FILE_WRITE);
+    if (!_file) {
+        Serial.println("[hal/log.hh] Não foi possível abrir o arquivo.");
+        return false;
+    }
+
+    return true;
 }
 
 /// Imprime dados no datalogger, devendo ser executado
@@ -24,7 +50,9 @@ int logPrintf(const char* format, ...) {
     int res = vsnprintf(buffer, sizeof(buffer) / sizeof(char), format, list);
 
     // TODO: Imprimir `buffer` no arquivo
-    if (Serial) {
+    if (_file) {
+        _file.print(buffer);
+    } else if (Serial) {
         Serial.print("[hal/log.hh] ");
         Serial.println(buffer);
     }
@@ -36,5 +64,7 @@ int logPrintf(const char* format, ...) {
 
 /// Finaliza o datalogger, salvando os dados do arquivo.
 void logClose() {
-    // TODO
+    _file.close();
+    SD.end();
+    _spiSd.end();
 }
