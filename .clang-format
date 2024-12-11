@@ -4,3 +4,6 @@ UseTab: Never
 AllowShortFunctionsOnASingleLine: false
 AllowShortIfStatementsOnASingleLine: false
 IndentCaseLabels: false
+SpacesInContainerLiterals: true
+SpaceBeforeCpp11BracedList: true
+Cpp11BracedListStyle: false
