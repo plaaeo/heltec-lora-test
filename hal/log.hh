@@ -29,7 +29,7 @@ bool logInit(const char* filename) {
     }
 
     // Abrir arquivo especificado
-    _file = SD.open(filename, FILE_WRITE);
+    _file = SD.open(filename, FILE_APPEND);
     if (!_file) {
         Serial.println("[hal/log.hh] Não foi possível abrir o arquivo.");
         return false;

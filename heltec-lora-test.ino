@@ -17,7 +17,7 @@
 #define MESSAGES_PER_TEST 50
 
 /// A mensagem enviada durante o experimento.
-const uint8_t _message[] = "oii";
+const uint8_t _message[] = "Mensagem!";
 const uint8_t _messageLength = sizeof(_message) / sizeof(char);
 bool _hasSD = false;
 
@@ -340,10 +340,11 @@ void timedLoop() {
         error = radioRecv(message, &length, toa + TX_DELAY + 100000);
 
         logPrintf(
-            "%llu,%u,%u,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
+            "%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
             timerTime() - _begin,
             _currentTest,
             _messageIndex,
+            _parameters.power,
             _parameters.sf,
             _parameters.cr,
             _parameters.bandwidth,
@@ -356,10 +357,11 @@ void timedLoop() {
         error = radioSend(_message, _messageLength);
 
         logPrintf(
-            "%llu,%u,%u,SF%hhu,CR%hhu,%f kHz,%u\n",
+            "%llu,%u,%u,%hhu dB,SF%hhu,CR%hhu,%f kHz,%u\n",
             timerTime() - _begin,
             _currentTest,
             _messageIndex,
+            _parameters.power,
             _parameters.sf,
             _parameters.cr,
             _parameters.bandwidth,
