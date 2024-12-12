@@ -17,10 +17,8 @@ static void _timerCallback(void* _arg) {
     if (_timerShouldResync) {
         esp_timer_restart(_timerHandle, _timerNextPeriod);
         _timerShouldResync = false;
-    } else {
-        _timerFlag = true;
     }
-
+    _timerFlag = true;
 }
 
 /// Inicializa o timer.
@@ -48,7 +46,7 @@ void timerResync(uint64_t micro) {
 }
 
 /// Retorna o tempo atual no timer. 
-uint64_t timerTime() {
+int64_t timerTime() {
     return esp_timer_get_time();
 }
 
@@ -61,8 +59,8 @@ uint64_t timerPeriod() {
     return period;
 }
 
-/// Retorna o tempo, em microsegundos, do próximo tick do timer.
-int64_t timerNextTicks() {
+/// Retorna o tempo absoluto, em microsegundos, do próximo tick do timer.
+int64_t timerNextTick() {
     return esp_timer_get_next_alarm();
 }
 
