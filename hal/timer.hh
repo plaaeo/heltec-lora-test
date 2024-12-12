@@ -52,6 +52,20 @@ uint64_t timerTime() {
     return esp_timer_get_time();
 }
 
+/// Retorna o período (ou timeout) do timer.
+uint64_t timerPeriod() {
+    uint64_t period = 0;
+    
+    ESP_ERROR_CHECK(esp_timer_get_period(_timerHandle, &period));
+    
+    return period;
+}
+
+/// Retorna o tempo, em microsegundos, do próximo tick do timer.
+int64_t timerNextTicks() {
+    return esp_timer_get_next_alarm();
+}
+
 /// Retorna `true` se o timer acabou de executar.
 bool timerFlag() {
     bool flag = _timerFlag;

@@ -21,7 +21,6 @@ File _file;
 /// em um arquivo, dado o nome.
 bool logInit(const char* filename) {
     _spiSd.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-    pinMode(_spiSd.pinSS(), OUTPUT);
 
     // Inicializar biblioteca do SD
     if (!SD.begin(SD_CS, _spiSd)) {
@@ -49,12 +48,12 @@ int logPrintf(const char* format, ...) {
     char buffer[1024];
     int res = vsnprintf(buffer, sizeof(buffer) / sizeof(char), format, list);
 
-    // TODO: Imprimir `buffer` no arquivo
+    // Imprime no Serial como fallback, caso a inicialização tenha falhado
     if (_file) {
         _file.print(buffer);
     } else if (Serial) {
         Serial.print("[hal/log.hh] ");
-        Serial.println(buffer);
+        Serial.print(buffer);
     }
 
     va_end(list);
