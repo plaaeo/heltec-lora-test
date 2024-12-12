@@ -25,12 +25,13 @@ static void _timerCallback(void* _arg) {
 void timerInit() {
     const esp_timer_create_args_t args = {
         .callback = &_timerCallback,
-        .arg = (void*) &_timerHandle,
+        .arg = (void*)&_timerHandle,
         .name = "sync",
     };
 
     // Criar o timer periódico
-    ESP_ERROR_CHECK(esp_timer_create(&args, (esp_timer_handle_t*)&_timerHandle));
+    ESP_ERROR_CHECK(
+        esp_timer_create(&args, (esp_timer_handle_t*)&_timerHandle));
 }
 
 /// Inicia o timer periódico com um timeout definido em microsegundos.
@@ -45,7 +46,7 @@ void timerResync(uint64_t micro) {
     _timerNextPeriod = micro;
 }
 
-/// Retorna o tempo atual no timer. 
+/// Retorna o tempo atual no timer.
 int64_t timerTime() {
     return esp_timer_get_time();
 }
@@ -53,9 +54,9 @@ int64_t timerTime() {
 /// Retorna o período (ou timeout) do timer.
 uint64_t timerPeriod() {
     uint64_t period = 0;
-    
+
     ESP_ERROR_CHECK(esp_timer_get_period(_timerHandle, &period));
-    
+
     return period;
 }
 

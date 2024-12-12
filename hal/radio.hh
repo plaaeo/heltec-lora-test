@@ -103,7 +103,7 @@ bool radioInit() {
 /// Envia um pacote e aguarda ele terminar de ser enviado,
 /// retornando o resultado da transmissão.
 radio_error_t radioSend(const uint8_t* message, uint8_t size) {
-    int16_t status = radio.startTransmit((uint8_t *) message, size);
+    int16_t status = radio.startTransmit((uint8_t*)message, size);
     radio_error_t error = _radioConvertError(status);
 
     // Não aguarda o fim da transmissão caso ocorra um erro.
@@ -119,10 +119,10 @@ radio_error_t radioSend(const uint8_t* message, uint8_t size) {
     return _radioConvertError(status);
 }
 
-/// Aguarda até que um pacote seja recebido, ou ocorra timeout (passado em microsegundos),
-/// retornando o resultado da operação.
-/// Recebe em `*length` o tamanho do buffer de destino e, após a
-/// operação, armazezna o tamanho do pacote lido.
+/// Aguarda até que um pacote seja recebido, ou ocorra timeout (passado em
+/// microsegundos), retornando o resultado da operação. Recebe em `*length` o
+/// tamanho do buffer de destino e, após a operação, armazezna o tamanho do
+/// pacote lido.
 radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
     auto timeoutReal = radio.calculateRxTimeout(timeout);
     int16_t status = radio.startReceive(timeoutReal);
@@ -178,7 +178,7 @@ void radioSetParameters(radio_parameters_t& param) {
         radio.implicitHeader(param.packetLength);
     else
         radio.explicitHeader();
-    
+
     radio.invertIQ(param.invertIq);
     radio.setSyncWord(param.syncWord);
 }

@@ -4,10 +4,10 @@
  * Abstração para o datalogger utilizado no experimento.
  */
 
+#include <SD.h>
+#include <SPI.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <SPI.h>
-#include <SD.h>
 
 #define SD_SCK 2
 #define SD_MISO 1
@@ -24,7 +24,8 @@ bool logInit(const char* filename) {
 
     // Inicializar biblioteca do SD
     if (!SD.begin(SD_CS, _spiSd)) {
-        Serial.println("[hal/log.hh] Não foi possível inicializar o datalogger.");
+        Serial.println(
+            "[hal/log.hh] Não foi possível inicializar o datalogger.");
         return false;
     }
 

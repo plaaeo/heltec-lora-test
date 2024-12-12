@@ -49,7 +49,7 @@ void uiSetup() {
 /// Atualiza o estado da interface dependendo da entrada do usuário.
 void uiLoop() {
     uiUpdateButton();
-    
+
     if (uiSelectNext())
         _uiState.selection++;
 
@@ -107,7 +107,7 @@ bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
 /// Desenha um texto na interface de usuário.
 void uiText(int16_t x, int16_t y, const String& text) {
     display.setColor(INVERSE);
-    
+
     // Alinhar horizontalmente
     int16_t w = display.getStringWidth(text);
     x = uiAlignX(x, w);
@@ -123,7 +123,7 @@ bool uiButton(int16_t x, int16_t y, const String& text) {
     int16_t w = display.getStringWidth(text);
 
     bool pressed = uiItem(x, y, w + 2, 10);
-    
+
     // Centralizar texto no botão
     switch (_uiState.alignment) {
     case kLeft:
@@ -133,9 +133,9 @@ bool uiButton(int16_t x, int16_t y, const String& text) {
         x -= 1;
         break;
     }
-    
+
     uiText(x, y - 2, text);
-    
+
     return pressed;
 }
 

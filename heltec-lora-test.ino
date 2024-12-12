@@ -125,7 +125,8 @@ int printMinimalTime(char* buffer, size_t size, uint64_t time) {
     return snprintf(buffer, size, "%.1f %s", fTime, unit);
 }
 
-int printMinimalPeriod(char* buffer, size_t size, uint64_t start, uint64_t end) {
+int printMinimalPeriod(char* buffer, size_t size, uint64_t start,
+                       uint64_t end) {
     // Minimizar o tamanho da string de tempo
     const char* unit = "us";
     float fStart = start;
@@ -147,7 +148,7 @@ void drawTestOverlay(const char* title, bool drawQuality, bool drawToA) {
     char buffer[1024];
 
     // Desenhar textos estáticos
-    uiAlign (kCenter);
+    uiAlign(kCenter);
     if (title == NULL)
         uiText(0, 0, _hasSD ? "SD" : "SER");
 
@@ -182,7 +183,8 @@ void drawTestOverlay(const char* title, bool drawQuality, bool drawToA) {
     } else {
         // Printar quantia de pacotes ok, corruptos e perdidos
         uiAlign(kCenter);
-        snprintf(buffer, 1024, "(%u/%u/%u)", _testsOk, _testsCorrupt, _testsLost);
+        snprintf(buffer, 1024, "(%u/%u/%u)", _testsOk, _testsCorrupt,
+                 _testsLost);
         uiText(0, paramsY - 10, buffer);
     }
 
@@ -223,11 +225,10 @@ protocol_state_t _protoState = kUninitialized;
 uint32_t _messageIndex = 0;
 uint64_t _begin = 0;
 
-
 /// Executa após um cargo ser selecionado no menu.
 void syncLoop() {
     uiLoop();
-    
+
     // Desenhar interface antes da operação LoRa
     uiClear();
     drawTestOverlay(NULL, _role == kRx, true);
@@ -275,14 +276,14 @@ void syncLoop() {
 }
 
 /// Executa o experimento principal para o receptor e transmissor.
-/// 
+///
 /// A função deve iniciar apenas quando o timeout do timer sincronizado acabar.
 /// Desta forma, o receptor e o transmissor se mantém sincronizados durante
-/// o experimento. 
+/// o experimento.
 void timedLoop() {
     static const char* _waitMessage = "(...)";
     static uint32_t _renderFrame = 0;
-    
+
     const bool isTimerDone = timerFlag();
 
     // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
@@ -295,16 +296,16 @@ void timedLoop() {
     // a cada oitava execução durante a espera do timer.
     if (isTimerDone || _renderFrame++ == 8) {
         _renderFrame = 0;
-        
+
         uiAlign(kLeft);
-        
+
         // Mostrar "(...)" antes de realizar uma operação LoRa
         if (isTimerDone)
             _waitMessage = "(...)";
 
         uiText(5, 15, _waitMessage);
 
-        // Imprimir o restante do budget até o próximo timer        
+        // Imprimir o restante do budget até o próximo timer
         int64_t now = timerTime();
         int64_t nextTick = timerNextTick();
         uint64_t period = timerPeriod();
@@ -313,7 +314,7 @@ void timedLoop() {
 
         char buffer[256];
         printMinimalPeriod(buffer, 256, period - (nextTick - now), period);
-        
+
         uiText(5, 15, buffer);
         uiFinish();
     }
@@ -330,43 +331,29 @@ void timedLoop() {
         // Receber mensagem e imprimir status da operação no Serial
         uint8_t message[_messageLength];
         uint8_t length = _messageLength;
-        
-        // O receptor espera o `TX_DELAY` + 100ms para compensar quaisquer delay vindo
-        // da biblioteca RadioLib, somado com possíveis inconsistências no timing devido
-        // à execução de código do display e cartão SD entre as operações LoRa.
+
+        // O receptor espera o `TX_DELAY` + 100ms para compensar quaisquer delay
+        // vindo da biblioteca RadioLib, somado com possíveis inconsistências no
+        // timing devido à execução de código do display e cartão SD entre as
+        // operações LoRa.
         //
-        // Note que essas inconsistências não implicam na dessincronização dos timers,
-        // visto que a resincronização é feita no callback do timer para garantir o mínimo erro.
+        // Note que essas inconsistências não implicam na dessincronização dos
+        // timers, visto que a resincronização é feita no callback do timer para
+        // garantir o mínimo erro.
         error = radioRecv(message, &length, toa + TX_DELAY + 100000);
 
-        logPrintf(
-            "%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
-            timerTime() - _begin,
-            _currentTest,
-            _messageIndex,
-            _parameters.power,
-            _parameters.sf,
-            _parameters.cr,
-            _parameters.bandwidth,
-            radioRSSI(),
-            radioSNR(),
-            error
-        );
+        logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
+                  timerTime() - _begin, _currentTest, _messageIndex,
+                  _parameters.power, _parameters.sf, _parameters.cr,
+                  _parameters.bandwidth, radioRSSI(), radioSNR(), error);
     } else if (_role == kTx) {
         // Enviar mensagem e imprimir status da transmissão no Serial
         error = radioSend(_message, _messageLength);
 
-        logPrintf(
-            "%llu,%u,%u,%hhu dB,SF%hhu,CR%hhu,%f kHz,%u\n",
-            timerTime() - _begin,
-            _currentTest,
-            _messageIndex,
-            _parameters.power,
-            _parameters.sf,
-            _parameters.cr,
-            _parameters.bandwidth,
-            error
-        );
+        logPrintf("%llu,%u,%u,%hhu dB,SF%hhu,CR%hhu,%f kHz,%u\n",
+                  timerTime() - _begin, _currentTest, _messageIndex,
+                  _parameters.power, _parameters.sf, _parameters.cr,
+                  _parameters.bandwidth, error);
     }
 
     // Atualizar mensagem no display com erro apropriado
@@ -389,7 +376,7 @@ void timedLoop() {
         _testsLost++;
         break;
     }
-    
+
     _messageIndex++;
 
     // Iniciar nova linha de testes após `MESSAGES_PER_TEST` mensagens
@@ -412,7 +399,7 @@ void finishedLoop() {
     uiClear();
     drawTestOverlay(NULL, false, false);
     uiAlign(kCenter);
-    
+
     uiText(0, 15, "Testes finalizados!");
     uiFinish();
 }
