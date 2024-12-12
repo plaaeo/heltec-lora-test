@@ -7,14 +7,14 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal
-#define BUDGET 200000
+#define BUDGET 240000
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
-#define TX_DELAY 100000
+#define TX_DELAY 80000
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 1
+#define MESSAGES_PER_TEST 50
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "oii";
@@ -25,6 +25,7 @@ bool _hasSD = false;
 /// SF, CR, largura de banda e potência de transmissão do teste.
 uint32_t _currentTest = 0;
 
+/// Contagem de pacotes recebidos com sucesso, corruptos ou perdidos.
 uint32_t _testsOk = 0;
 uint32_t _testsCorrupt = 0;
 uint32_t _testsLost = 0;
@@ -222,6 +223,57 @@ protocol_state_t _protoState = kUninitialized;
 uint32_t _messageIndex = 0;
 uint64_t _begin = 0;
 
+
+/// Executa após um cargo ser selecionado no menu.
+void syncLoop() {
+    uiLoop();
+    
+    // Desenhar interface antes da operação LoRa
+    uiClear();
+    drawTestOverlay(NULL, _role == kRx, true);
+
+    uiAlign(kCenter);
+    uiText(0, 15, _role == kRx ? "Esperando sync..." : "Enviando sync...");
+    uiFinish();
+
+    // Inicializar parâmetros padrão de transmissão
+    radioSetParameters(_parameters);
+
+    radio_error_t error = kNone;
+    uint8_t message[] = { _currentTest };
+    uint8_t length = sizeof(message) / sizeof(uint8_t);
+
+    if (_role == kRx) {
+        error = radioRecv(message, &length);
+    } else if (_role == kTx) {
+        error = radioSend(message, length);
+    }
+
+    // Tentar novamente caso a transmissão tenha falhado.
+    if (error != kNone) {
+        Serial.print("Erro na sincronização, e");
+        Serial.println(error);
+        delay(1000);
+        return;
+    }
+
+    // Esperar `TX_DELAY` microsegundos do budget do transmissor
+    // para garantir que os receptores começam a receber antes do
+    // transmissor começar a enviar.
+    if (_role == kTx) {
+        uint32_t start = micros();
+        while (micros() - start < TX_DELAY);
+    }
+
+    // Atualizar parâmetros do teste e iniciar o experimento.
+    _currentTest = message[0];
+    updateTestParameters();
+
+    timerStart(radioTransmitTime(_messageLength) + BUDGET);
+    _begin = timerTime();
+    _protoState = kRunning;
+}
+
 /// Executa o experimento principal para o receptor e transmissor.
 /// 
 /// A função deve iniciar apenas quando o timeout do timer sincronizado acabar.
@@ -276,16 +328,16 @@ void timedLoop() {
         const uint64_t toa = radioTransmitTime(_messageLength);
 
         // Receber mensagem e imprimir status da operação no Serial
-        uint8_t message[10];
-        uint8_t length = 10;
+        uint8_t message[_messageLength];
+        uint8_t length = _messageLength;
         
-        // O receptor espera o `TX_DELAY` + 80ms para compensar quaisquer delay vindo
+        // O receptor espera o `TX_DELAY` + 100ms para compensar quaisquer delay vindo
         // da biblioteca RadioLib, somado com possíveis inconsistências no timing devido
         // à execução de código do display e cartão SD entre as operações LoRa.
         //
         // Note que essas inconsistências não implicam na dessincronização dos timers,
         // visto que a resincronização é feita no callback do timer para garantir o mínimo erro.
-        error = radioRecv(message, &length, toa + TX_DELAY + 80000);
+        error = radioRecv(message, &length, toa + TX_DELAY + 100000);
 
         logPrintf(
             "%llu,%u,%u,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
@@ -353,246 +405,21 @@ void timedLoop() {
     }
 }
 
-void txLoop() {
-    if (_protoState == kRunning && !timerFlag())
-        return;
-
-    // O budget de tempo total para transmissão
-    const uint64_t totalBudget = radioTransmitTime(_messageLength) + BUDGET;
-    const uint64_t budgetStart = timerTime();
-
-    uiLoop();
+/// Executa quando todos os testes forem finalizados.
+void finishedLoop() {
     uiClear();
-    drawTestOverlay(NULL, false, true);
+    drawTestOverlay(NULL, false, false);
     uiAlign(kCenter);
-
-    switch (_protoState) {
-    case kUninitialized: {
-        uiText(0, 15, "Sincronizando...");
-        uiFinish();
-
-        // Inicializar parâmetros padrão de transmissão
-        radioSetParameters(_parameters);
-
-        uint8_t message[] = { _currentTest };
-        const auto error = radioSend(message, 1);
-
-        // Tentar novamente caso a transmissão tenha falhado.
-        if (error != kNone) {
-            Serial.print("[tx] Erro ");
-            Serial.println(error);
-            delay(1000);
-            return;
-        }
-
-        // Esperar `TX_DELAY` microsegundos do budget para garantir
-        // que os receptores começam a receber antes do transmissor
-        // começar a enviar.
-        uint32_t start = micros();
-        while (micros() - start < TX_DELAY);
-
-        // Atualizar parâmetros do teste e iniciar o experimento.
-        updateTestParameters();
-
-        timerStart(radioTransmitTime(_messageLength) + BUDGET);
-        _begin = timerTime();
-        _protoState = kRunning;
-        break;
-    }
-    case kRunning: {
-        const uint64_t toa = radioTransmitTime(_messageLength);
-
-        char buffer[1024];
-        snprintf(buffer, 1024, "Transmitindo #%u...", _messageIndex + 1);
-        uiText(0, 15, buffer);
-
-        uiFinish();
-
-        // Enviar mensagem e imprimir status da transmissão no Serial
-        const auto error = radioSend(_message, _messageLength);
-
-        Serial.print(timerTime() - _begin);
-        Serial.print(",");
-        Serial.print(_currentTest);
-        Serial.print(",");
-        Serial.print(_messageIndex);
-        Serial.print(",SF");
-        Serial.print(_parameters.sf);
-        Serial.print(",CR");
-        Serial.print(_parameters.cr);
-        Serial.print(",");
-        Serial.print(_parameters.bandwidth);
-        Serial.print("kHz,");
-        Serial.println(error);
-
-        _messageIndex++;
-
-        // Iniciar nova linha de testes após `MESSAGES_PER_TEST` mensagens
-        if (_messageIndex == MESSAGES_PER_TEST) {
-            _messageIndex = 0;
-            _currentTest++;
-
-            // Marcar o timer para resincronização e iniciar próximo teste
-            _protoState = updateTestParameters() ? kFinished : kRunning;
-            timerResync(radioTransmitTime(_messageLength) + BUDGET);
-        }
-        
-        // Atualizar interface após receber
-        uiClear();
-        drawTestOverlay(NULL, false, true);
-        uiAlign(kCenter);
-
-        snprintf(buffer, 1024, "Transmitido (e%u) #%u", error, _messageIndex);
-        uiText(0, 15, buffer);
-
-        uiFinish();
-        break;
-    }
-    case kFinished: {
-        uiText(0, 15, "Testes finalizados!");
-        uiFinish();
-        break;
-    }
-    }
-
-    const uint64_t budgetEnd = timerTime();
-
-    Serial.print(budgetEnd-budgetStart);
-    Serial.print('/');
-    Serial.print(totalBudget);
-    Serial.println("ms used budget");
-}
-
-void rxLoop() {
-    if (_protoState == kRunning && !timerFlag())
-        return;
-
-    // O budget de tempo total para transmissão
-    const uint64_t totalBudget = radioTransmitTime(_messageLength) + BUDGET;
-    const uint64_t budgetStart = timerTime();
-
-    uiLoop();
-
-    switch (_protoState) {
-    case kUninitialized: {
-        uiClear();
-        drawTestOverlay(NULL, true, true);
-        uiAlign(kCenter);
-        
-        uiText(0, 15, "Aguardando sync...");
-        uiFinish();
-
-        // Inicializar parâmetros padrão de transmissão
-        radioSetParameters(_parameters);
-
-        uint8_t message[] = { _currentTest };
-        uint8_t length = 1;
-        const auto error = radioRecv(message, &length);
-
-        // Tentar novamente caso a operação tenha falhado.
-        if (error != kNone) {
-            logPrintf("[rx] Erro na sincronizacao (%u)\n", error);
-            delay(1000);
-            return;
-        }
-
-        // Atualizar parâmetros do teste e iniciar o experimento.
-        _currentTest = message[0];
-        updateTestParameters();
-
-        timerStart(radioTransmitTime(_messageLength) + BUDGET);
-        _begin = timerTime();
-        _protoState = kRunning;
-        break;
-    }
-    case kRunning: {
-        const uint64_t toa = radioTransmitTime(_messageLength);
     
-        uiClear();
-        drawTestOverlay(NULL, true, true);
-        uiAlign(kCenter);
-        
-        char buffer[1024];
-        snprintf(buffer, 1024, "Recebendo #%u...", _messageIndex + 1);
-        uiText(0, 15, buffer);
-
-        uiFinish();
-
-        // Receber mensagem e imprimir status da operação no Serial
-        uint8_t message[10];
-        uint8_t length = 10;
-        
-        const auto error = radioRecv(message, &length, toa + 2 * TX_DELAY);
-
-        logPrintf(
-            "%llu,%u,%u,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
-            timerTime() - _begin,
-            _currentTest,
-            _messageIndex,
-            _parameters.sf,
-            _parameters.cr,
-            _parameters.bandwidth,
-            radioRSSI(),
-            radioSNR(),
-            error
-        );
-
-        _messageIndex++;
-
-        // Iniciar nova linha de testes após `MESSAGES_PER_TEST` mensagens
-        if (_messageIndex == MESSAGES_PER_TEST) {
-            _messageIndex = 0;
-            _currentTest++;
-
-            // Marcar o timer para resincronização e iniciar próximo teste
-            _protoState = updateTestParameters() ? kFinished : kRunning;
-            timerResync(radioTransmitTime(_messageLength) + BUDGET);
-
-            // Terminar log
-            if (_protoState == kFinished) {
-                logClose();
-            }
-        }
-
-        // Atualizar interface após receber
-        uiClear();
-        drawTestOverlay(NULL, true, true);
-        uiAlign(kCenter);
-
-        snprintf(buffer, 1024, "Recebido (e%u) #%u", error, _messageIndex);
-        uiText(0, 15, buffer);
-
-        uiFinish();
-        break;
-    }
-    case kFinished: {
-        uiClear();
-        drawTestOverlay(NULL, true, false);
-        uiAlign(kCenter);
-        
-        uiText(0, 15, "Testes finalizados!");
-        uiFinish();
-        break;
-    }
-    }
-
-    const uint64_t budgetEnd = timerTime();
-
-    Serial.print(budgetEnd - budgetStart);
-    Serial.print('/');
-    Serial.print(totalBudget);
-    Serial.println("ms used budget");
+    uiText(0, 15, "Testes finalizados!");
+    uiFinish();
 }
 
 void loop() {
     halLoop();
 
-    if (_protoState == kRunning)
-        return timedLoop();
-
-    // Determinar qual tela desenhar dependendo do cargo
-    switch (_role) {
-    case kUnspecified: {
+    // Desenhar tela de seleção de cargo antes de iniciar o protocolo
+    if (_role == kUnspecified) {
         const uint32_t rate = 1000 / 20;
         uint32_t start = millis();
 
@@ -612,13 +439,13 @@ void loop() {
         // Esperar o suficiente para uma taxa de 20FPS
         uint32_t time = millis() - start;
         delay(time >= rate ? 0 : rate - time);
-        break;
+        return;
     }
-    case kTx:
-        txLoop();
-        break;
-    case kRx:
-        rxLoop();
-        break;
-    }
+
+    if (_protoState == kUninitialized)
+        return syncLoop();
+    else if (_protoState == kRunning)
+        return timedLoop();
+    else
+        return finishedLoop();
 }
