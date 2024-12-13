@@ -7,14 +7,14 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal
-#define BUDGET 240000
+#define BUDGET 200000
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
 #define TX_DELAY 80000
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 50
+#define MESSAGES_PER_TEST 20
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "Mensagem!";
@@ -56,7 +56,6 @@ enum role_t {
 
 void setup() {
     Serial.begin(115200);
-    SPI.begin(SCK, MISO, MOSI, SS);
 
     halInit();
     radioInit();
@@ -70,7 +69,7 @@ void setup() {
 /// Atualiza os parâmetros atuais do teste de acordo com o índice do teste
 /// atual. Retorna `true` se o índice do teste era inválido.
 bool updateTestParameters() {
-    const uint8_t power[] = { 5, 14, 23 };
+    const uint8_t power[] = { 5, 14, 22 };
     const uint8_t sf[] = { 7, 8, 9, 10, 11, 12 };
     const uint8_t cr[] = { 5, 8 };
     const float bw[] = { 62.5, 125.0, 250.0 };
@@ -174,7 +173,7 @@ void drawTestOverlay(const char* title, bool drawQuality, bool drawToA) {
 
     if (drawToA) {
         // Desenhar tempo de transmissão alinhado com a largura de banda
-        const uint64_t toa = radioTransmitTime(_messageLength);
+        const uint64_t toa = radioTransmitTime(_parameters, _messageLength);
         uiText(0, paramsY - 10, "ToA");
 
         uiAlign(kRight);
@@ -270,7 +269,10 @@ void syncLoop() {
     _currentTest = message[0];
     updateTestParameters();
 
-    timerStart(radioTransmitTime(_messageLength) + BUDGET);
+    const auto totalBudget =
+        radioTransmitTime(_parameters, _messageLength) + BUDGET;
+    timerStart(totalBudget + TX_DELAY);
+    timerResync(totalBudget);
     _begin = timerTime();
     _protoState = kRunning;
 }
@@ -323,11 +325,10 @@ void timedLoop() {
     if (!isTimerDone)
         return;
 
+    const uint64_t toa = radioTransmitTime(_parameters, _messageLength);
     radio_error_t error = kNone;
 
     if (_role == kRx) {
-        const uint64_t toa = radioTransmitTime(_messageLength);
-
         // Receber mensagem e imprimir status da operação no Serial
         uint8_t message[_messageLength];
         uint8_t length = _messageLength;
@@ -340,7 +341,7 @@ void timedLoop() {
         // Note que essas inconsistências não implicam na dessincronização dos
         // timers, visto que a resincronização é feita no callback do timer para
         // garantir o mínimo erro.
-        error = radioRecv(message, &length, toa + TX_DELAY + 100000);
+        error = radioRecv(message, &length, toa + TX_DELAY);
 
         logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
                   timerTime() - _begin, _currentTest, _messageIndex,
@@ -386,7 +387,7 @@ void timedLoop() {
 
         // Marcar o timer para resincronização e iniciar próximo teste
         _protoState = updateTestParameters() ? kFinished : kRunning;
-        timerResync(radioTransmitTime(_messageLength) + BUDGET);
+        timerResync(radioTransmitTime(_parameters, _messageLength) + BUDGET);
 
         // Finalizar log do receptor após o último teste
         if (_protoState == kFinished && _role == kRx)

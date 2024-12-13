@@ -6,11 +6,16 @@
  */
 
 #pragma once
+#include <OLEDDisplayUi.h>
+#include <SSD1306Wire.h>
+
 #include "buttons.hh"
 #include "lib.hh"
 
 /// Define três tipos de alinhamento diferentes.
 enum alignment_t { kLeft, kCenter, kRight };
+
+SSD1306Wire display(0x3c, SDA_OLED, SCL_OLED, GEOMETRY_128_64);
 
 static struct {
     /// Determina o índice do item selecionado atualmente.
@@ -35,7 +40,19 @@ void uiAlign(alignment_t align) {
 }
 
 /// Inicializa a interface com um estado padrão.
-void uiSetup() {
+bool uiSetup() {
+    pinMode(RST_OLED, OUTPUT);
+    digitalWrite(RST_OLED, HIGH);
+    delay(1);
+    digitalWrite(RST_OLED, LOW);
+    delay(20);
+    digitalWrite(RST_OLED, HIGH);
+
+    if (!display.init())
+        return false;
+
+    display.setContrast(255);
+    display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
 
     _uiState = {};

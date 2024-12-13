@@ -6,19 +6,12 @@
  */
 
 #pragma once
+#include <SPI.h>
+#include <SX126x.h>
 #include <stdint.h>
 
-#include "lib.hh"
-
-/// Recebe `true` quando um interrupt for gerado pelo radiotransmissor.
-volatile bool __radioDidIRQ = false;
-
-#if defined(ESP8266) || defined(ESP32)
-ICACHE_RAM_ATTR
-#endif
-void __radioIRQ(void) {
-    __radioDidIRQ = true;
-}
+SPIClass _radioSPI = SPIClass(HSPI);
+SX126x _radio;
 
 enum radio_error_t {
     kNone,
@@ -36,15 +29,19 @@ enum radio_error_t {
     kUnknown,
 };
 
-/// Converte os erros da RadioLib em `radio_error_t`
-radio_error_t _radioConvertError(int16_t e) {
+/// Converte os erros da LoRa-RF em `radio_error_t`
+radio_error_t _radioConvertError(uint8_t e) {
     switch (e) {
-    case RADIOLIB_ERR_NONE:
+    case LORA_STATUS_DEFAULT:
+    case LORA_STATUS_TX_DONE:
+    case LORA_STATUS_RX_DONE:
+    case LORA_STATUS_CAD_DONE:
         return kNone;
-    case RADIOLIB_ERR_CRC_MISMATCH:
+    case LORA_STATUS_CRC_ERR:
+    case LORA_STATUS_HEADER_ERR:
         return kCrc;
-    case RADIOLIB_ERR_TX_TIMEOUT:
-    case RADIOLIB_ERR_RX_TIMEOUT:
+    case LORA_STATUS_TX_TIMEOUT:
+    case LORA_STATUS_RX_TIMEOUT:
         return kTimeout;
     default:
         // Sinalizar erro desconhecido no Serial
@@ -95,27 +92,45 @@ struct radio_parameters_t {
 /// Inicializa o radio LoRa.
 /// Retorna `true` caso o radio tenha inicializado com sucesso.
 bool radioInit() {
-    radio.begin();
-    radio.setDio1Action(__radioIRQ);
+    _radioSPI.begin(SCK, MISO, MOSI, SS);
+
+    _radio.setSPI(_radioSPI);
+    if (!_radio.begin(SS, RST_LoRa, BUSY_LoRa, DIO0, -1, -1))
+        return false;
+
+    _radio.setDio3TcxoCtrl(SX126X_DIO3_OUTPUT_1_8, SX126X_TCXO_DELAY_10);
+    _radio.setRegulator(SX126X_REGULATOR_LDO);
+    _radio.setFrequency(915000000);
+    _radio.standby(SX126X_STANDBY_XOSC);
+    _radio.setFallbackMode(SX126X_FALLBACK_STDBY_XOSC);
     return true;
+}
+
+/// Calcula o timeout para o SX1262, dado o timeout em microsegundos.
+uint64_t radioCalculateTimeout(uint64_t timeout) {
+    return timeout / 15.625;
 }
 
 /// Envia um pacote e aguarda ele terminar de ser enviado,
 /// retornando o resultado da transmissão.
-radio_error_t radioSend(const uint8_t* message, uint8_t size) {
-    int16_t status = radio.startTransmit((uint8_t*)message, size);
-    radio_error_t error = _radioConvertError(status);
+radio_error_t radioSend(const uint8_t* message, uint8_t size,
+                        uint64_t timeout = 0) {
+    _radio.beginPacket();
 
-    // Não aguarda o fim da transmissão caso ocorra um erro.
-    if (error != kNone)
-        return error;
+    _radio.write((uint8_t*)message, size);
 
-    // Aguarda o pacote ser enviado completamente.
-    while (!__radioDidIRQ);
-    __radioDidIRQ = false;
+    // Falha apenas se for chamado enquanto outra mensagem ainda estiver sendo
+    // enviada, logo, não deve acontecer.
+    timeout = radioCalculateTimeout(timeout);
+    if (!_radio.endPacket(timeout >> 6))
+        return kUnknown;
 
-    status = radio.finishTransmit();
-    radio.standby();
+    // Aguarda o pacote ser enviado completamente, ou demore demais e cause um
+    // timeout.
+    if (!_radio.wait())
+        return kTimeout;
+
+    uint8_t status = _radio.status();
     return _radioConvertError(status);
 }
 
@@ -124,61 +139,92 @@ radio_error_t radioSend(const uint8_t* message, uint8_t size) {
 /// tamanho do buffer de destino e, após a operação, armazezna o tamanho do
 /// pacote lido.
 radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
-    auto timeoutReal = radio.calculateRxTimeout(timeout);
-    int16_t status = radio.startReceive(timeoutReal);
+    timeout = radioCalculateTimeout(timeout);
+    _radio.request(timeout >> 6);
+    _radio.wait();
+
+    uint8_t status = _radio.status();
     radio_error_t error = _radioConvertError(status);
 
-    // Não aguarda até o fim da operação caso ocorra um erro.
     if (error != kNone)
         return error;
 
-    // Aguarda o pacote ser recebido, ou o timeout.
-    while (!__radioDidIRQ);
-    __radioDidIRQ = false;
+    uint8_t recvLength = _radio.available();
 
-    size_t msgLength = radio.getPacketLength();
+    if (recvLength < *length)
+        *length = recvLength;
 
-    // Evitar buffer overflow
-    if (*length < msgLength)
-        *length = msgLength;
+    // Ler o máximo possível que caiba em `dest`
+    _radio.read(dest, *length);
 
-    status = radio.readData(dest, *length);
-    radio.standby();
+    // Limpar o resto da mensagem que não foi lida
+    _radio.purge(recvLength - *length);
+
+    status = _radio.status();
     return _radioConvertError(status);
+}
+
+/// Determina se será ligado o Low Data Rate Optimization (LDRO)
+bool radioHasLDRO(radio_parameters_t& param) {
+    // https://github.com/sandeepmistry/arduino-LoRa/issues/85#issuecomment-372644755
+    long ldro = 1000 / ((param.bandwidth * 1000) / (1u << (uint32_t)param.sf));
+    return ldro > 16;
 }
 
 /// Retorna o tempo esperado de transmissão, em millisegundos, dados
 /// os parâmetros definidos e o comprimento do pacote a ser medido.
-uint64_t radioTransmitTime(uint32_t packetLength) {
-    return radio.getTimeOnAir(packetLength);
+uint64_t radioTransmitTime(radio_parameters_t& param, uint32_t packetLength) {
+    // Fórmula do Time on Air do datasheet do SX1268, seção (6.1.4 LoRa®
+    // Time-on-Air)
+    bool isSf56 = (param.sf == 5 || param.sf == 6);
+    bool ldro = radioHasLDRO(param);
+
+    double nSymbolHeader = param.packetLength == 0 ? 20 : 0;
+    double nBitCrc = param.crc ? 16 : 0;
+
+    // Numerador da fração interna do N_symbol
+    double numerator = 8.0 * packetLength + nBitCrc - (4.0 * param.sf) +
+                       (isSf56 ? 0 : 8) + nSymbolHeader;
+
+    // Denominador da fração interna do N_symbol
+    double denominator = 4 * (param.sf - (ldro ? 2 : 0));
+
+    // Numero de símbolos na transmissão (N_symbol)
+    double nSymbol =
+        param.preambleLength + 4.25 + (isSf56 ? 2.0 : 0.0) + 8 +
+        (ceil(max(numerator, 0.0) / denominator) * (double)(param.cr));
+
+    // ToA = N_symbol * (2^SF) / BW
+    double toa =
+        1000 * nSymbol * (double)(1u << (uint32_t)param.sf) / param.bandwidth;
+    return toa;
 }
 
 /// Retorna o RSSI da última mensagem recebida.
 int16_t radioRSSI() {
-    return radio.getRSSI();
+    return _radio.packetRssi();
 }
 
 /// Retorna o SNR da última mensagem recebida.
 float radioSNR() {
-    return radio.getSNR();
+    return _radio.snr();
 }
 
 /// Atualiza os parâmetros do radiotransmissor.
 void radioSetParameters(radio_parameters_t& param) {
-    radio.autoLDRO();
-    radio.setFrequency(param.frequency);
-    radio.setBandwidth(param.bandwidth);
-    radio.setSpreadingFactor(param.sf);
-    radio.setCodingRate(param.cr);
-    radio.setCRC(param.crc);
-    radio.setPreambleLength(param.preambleLength);
-    radio.setRxBoostedGainMode(param.boostedRxGain);
+    _radio.setFrequency(param.frequency * 1000000);
+    _radio.setTxPower(param.power, SX126X_TX_POWER_SX1262);
+    _radio.setSyncWord(param.syncWord);
+    _radio.setLoRaPacket(param.packetLength == 0 ? SX126X_HEADER_EXPLICIT
+                                                 : SX126X_HEADER_IMPLICIT,
+                         param.preambleLength, param.packetLength, param.crc,
+                         param.invertIq);
 
-    if (param.packetLength > 0)
-        radio.implicitHeader(param.packetLength);
-    else
-        radio.explicitHeader();
+    _radio.setRxGain(param.boostedRxGain ? SX126X_RX_GAIN_BOOSTED
+                                         : SX126X_RX_GAIN_POWER_SAVING);
 
-    radio.invertIQ(param.invertIq);
-    radio.setSyncWord(param.syncWord);
+    _radio.setLoRaModulation(param.sf, param.bandwidth * 1000, param.cr,
+                             radioHasLDRO(param));
+
+    _radio.standby(SX126X_STANDBY_XOSC);
 }
