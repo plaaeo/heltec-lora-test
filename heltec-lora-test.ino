@@ -7,14 +7,14 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal
-#define BUDGET 200000
+#define BUDGET 140000
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
-#define TX_DELAY 80000
+#define TX_DELAY 60000
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 20
+#define MESSAGES_PER_TEST 1
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "Mensagem!";
@@ -271,11 +271,17 @@ void syncLoop() {
 
     const auto totalBudget =
         radioTransmitTime(_parameters, _messageLength) + BUDGET;
-    timerStart(totalBudget + TX_DELAY);
-    timerResync(totalBudget);
+
+    timerStart(totalBudget, timedLoop);
+
     _begin = timerTime();
     _protoState = kRunning;
 }
+
+const char* _resultMessage = "(...)";
+int64_t _operationBegin = 0;
+int64_t _operationEnd = 0;
+int64_t _timedEnd = 0;
 
 /// Executa o experimento principal para o receptor e transmissor.
 ///
@@ -283,51 +289,10 @@ void syncLoop() {
 /// Desta forma, o receptor e o transmissor se mantém sincronizados durante
 /// o experimento.
 void timedLoop() {
-    static const char* _waitMessage = "(...)";
-    static uint32_t _renderFrame = 0;
-
-    const bool isTimerDone = timerFlag();
-
-    // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
-    uiLoop();
-    uiClear();
-    drawTestOverlay(NULL, _role == kRx, false);
-    uiAlign(kCenter);
-
-    // Renderizar interface do budget uma vez após o tick do timer, e
-    // a cada oitava execução durante a espera do timer.
-    if (isTimerDone || _renderFrame++ == 8) {
-        _renderFrame = 0;
-
-        uiAlign(kLeft);
-
-        // Mostrar "(...)" antes de realizar uma operação LoRa
-        if (isTimerDone)
-            _waitMessage = "(...)";
-
-        uiText(5, 15, _waitMessage);
-
-        // Imprimir o restante do budget até o próximo timer
-        int64_t now = timerTime();
-        int64_t nextTick = timerNextTick();
-        uint64_t period = timerPeriod();
-
-        uiAlign(kRight);
-
-        char buffer[256];
-        printMinimalPeriod(buffer, 256, period - (nextTick - now), period);
-
-        uiText(5, 15, buffer);
-        uiFinish();
-    }
-
-    // Aguardar o próximo timeout do timer.
-    if (!isTimerDone)
-        return;
-
     const uint64_t toa = radioTransmitTime(_parameters, _messageLength);
     radio_error_t error = kNone;
 
+    _operationBegin = timerTime();
     if (_role == kRx) {
         // Receber mensagem e imprimir status da operação no Serial
         uint8_t message[_messageLength];
@@ -341,7 +306,9 @@ void timedLoop() {
         // Note que essas inconsistências não implicam na dessincronização dos
         // timers, visto que a resincronização é feita no callback do timer para
         // garantir o mínimo erro.
-        error = radioRecv(message, &length, toa + TX_DELAY);
+        error = radioRecv(message, &length,
+                          (1.3 * radioTransmitTime(_parameters, 0)) + TX_DELAY);
+        _operationEnd = timerTime();
 
         logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
                   timerTime() - _begin, _currentTest, _messageIndex,
@@ -350,6 +317,7 @@ void timedLoop() {
     } else if (_role == kTx) {
         // Enviar mensagem e imprimir status da transmissão no Serial
         error = radioSend(_message, _messageLength);
+        _operationEnd = timerTime();
 
         logPrintf("%llu,%u,%u,%hhu dB,SF%hhu,CR%hhu,%f kHz,%u\n",
                   timerTime() - _begin, _currentTest, _messageIndex,
@@ -360,20 +328,20 @@ void timedLoop() {
     // Atualizar mensagem no display com erro apropriado
     switch (error) {
     case kNone:
-        _waitMessage = "(ok)";
+        _resultMessage = "(ok)";
         _testsOk++;
         break;
     case kTimeout:
-        _waitMessage = "(t.out)";
+        _resultMessage = "(t.out)";
         _testsLost++;
         break;
     case kHeader:
     case kCrc:
-        _waitMessage = "(crc/h)";
+        _resultMessage = "(crc/h)";
         _testsCorrupt++;
         break;
     case kUnknown:
-        _waitMessage = "(err)";
+        _resultMessage = "(err)";
         _testsLost++;
         break;
     }
@@ -390,9 +358,13 @@ void timedLoop() {
         timerResync(radioTransmitTime(_parameters, _messageLength) + BUDGET);
 
         // Finalizar log do receptor após o último teste
-        if (_protoState == kFinished && _role == kRx)
+        if (_protoState == kFinished) {
             logClose();
+            timerStop();
+        }
     }
+
+    _timedEnd = timerTime();
 }
 
 /// Executa quando todos os testes forem finalizados.
@@ -434,8 +406,34 @@ void loop() {
 
     if (_protoState == kUninitialized)
         return syncLoop();
-    else if (_protoState == kRunning)
-        return timedLoop();
-    else
+    else if (_protoState == kRunning) {
+        static uint32_t _renderFrame = 0;
+
+        // Renderizar a cada 8 execuções do `loop`
+        if (_renderFrame++ == 8) {
+            _renderFrame = 0;
+
+            // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
+            uiLoop();
+            uiClear();
+            drawTestOverlay(NULL, _role == kRx, false);
+            uiAlign(kLeft);
+
+            uiText(5, 15, _resultMessage);
+
+            // Imprimir o restante do budget até o próximo timer
+            int64_t now = timerTime();
+            int64_t nextTick = timerNextTick();
+            uint64_t period = timerPeriod();
+
+            uiAlign(kRight);
+
+            char buffer[256];
+            printMinimalPeriod(buffer, 256, period - (nextTick - now), period);
+
+            uiText(5, 15, buffer);
+            uiFinish();
+        }
+    } else if (_protoState == kFinished)
         return finishedLoop();
 }

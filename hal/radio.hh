@@ -93,8 +93,9 @@ struct radio_parameters_t {
 /// Retorna `true` caso o radio tenha inicializado com sucesso.
 bool radioInit() {
     _radioSPI.begin(SCK, MISO, MOSI, SS);
+    _radioSPI.setFrequency(SX126X_SPI_FREQUENCY);
 
-    _radio.setSPI(_radioSPI);
+    _radio.setSPI(_radioSPI, SX126X_SPI_FREQUENCY);
     if (!_radio.begin(SS, RST_LoRa, BUSY_LoRa, DIO0, -1, -1))
         return false;
 
@@ -161,14 +162,15 @@ radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
     _radio.purge(recvLength - *length);
 
     status = _radio.status();
+
+    _radio.standby(SX126X_STANDBY_XOSC);
     return _radioConvertError(status);
 }
 
 /// Determina se será ligado o Low Data Rate Optimization (LDRO)
 bool radioHasLDRO(radio_parameters_t& param) {
-    // https://github.com/sandeepmistry/arduino-LoRa/issues/85#issuecomment-372644755
-    long ldro = 1000 / ((param.bandwidth * 1000) / (1u << (uint32_t)param.sf));
-    return ldro > 16;
+    double symbolTime = ((double)(1u << (uint32_t)param.sf)) / param.bandwidth;
+    return symbolTime > 16.0;
 }
 
 /// Retorna o tempo esperado de transmissão, em millisegundos, dados
@@ -197,7 +199,8 @@ uint64_t radioTransmitTime(radio_parameters_t& param, uint32_t packetLength) {
     // ToA = N_symbol * (2^SF) / BW
     double toa =
         1000 * nSymbol * (double)(1u << (uint32_t)param.sf) / param.bandwidth;
-    return toa;
+
+    return (uint64_t)toa;
 }
 
 /// Retorna o RSSI da última mensagem recebida.
