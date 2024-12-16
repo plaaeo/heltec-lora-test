@@ -165,6 +165,10 @@ uint64_t radioTransmitTime(radio_parameters_t& _param, uint32_t packetLength) {
     return _radio.getTimeOnAir(packetLength);
 }
 
+bool radioBusy() {
+    return digitalRead(BUSY_LoRa) == HIGH;
+}
+
 /// Retorna o RSSI da última mensagem recebida.
 int16_t radioRSSI() {
     return _radio.getRSSI();

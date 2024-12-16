@@ -315,10 +315,12 @@ void timedLoop() {
                               radioTransmitTime(_parameters, 0) * 1.2);
         _operationEnd = timerTime();
 
-        logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
-                  timerTime() - _begin, _currentTest, _messageIndex,
-                  _parameters.power, _parameters.sf, _parameters.cr,
-                  _parameters.bandwidth, radioRSSI(), radioSNR(), error);
+        logPrintf(
+            "%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%.*s,%u\n",
+            timerTime() - _begin, _currentTest, _messageIndex,
+            _parameters.power, _parameters.sf, _parameters.cr,
+            _parameters.bandwidth, radioRSSI(), radioSNR(), length,
+            (size_t)message, error);
     } else if (_role == kTx) {
         // Enviar mensagem e imprimir status da transmissão no Serial
         error = radioSend(_message, _messageLength);
@@ -370,6 +372,14 @@ void timedLoop() {
     }
 
     _timedEnd = timerTime();
+
+    // Imprimir informações de timing para debugging
+    logDebugPrintf(
+        "%lld,%lld,%lld / lora_excess: %lld, budget_used: %lld, toa: %llu, "
+        "period: %llu, alarm: %lld\n",
+        _operationBegin, _operationEnd, _timedEnd,
+        (_operationEnd - _operationBegin) - toa, (_timedEnd - _operationEnd),
+        toa, _currentPeriod, _nextAlarm);
 }
 
 /// Executa quando todos os testes forem finalizados.
@@ -415,7 +425,7 @@ void loop() {
         static uint32_t _renderFrame = 0;
 
         // Renderizar a cada 4 execuções do `loop`
-        if (_renderFrame++ == 4) {
+        if (!radioBusy() && _renderFrame++ == 4) {
             _renderFrame = 0;
 
             // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
@@ -442,7 +452,11 @@ void loop() {
             double pctNow =
                 (timerTime() - _operationBegin) / (double)(_currentPeriod);
 
-            pctNow = min(pctNow, 1.0);
+            // Previne barras de progresso inválidas
+            pctOpBegin = constrain(pctOpBegin, 0.0, 1.0);
+            pctOpEnd = constrain(pctOpEnd, 0.0, 1.0);
+            pctFunctionEnd = constrain(pctFunctionEnd, 0.0, 1.0);
+            pctNow = constrain(pctNow, 0.0, 1.0);
 
             // Barra branca expressando o tempo total consumido pela
             // função `timedLoop`
@@ -463,7 +477,7 @@ void loop() {
             uiText(10, 15, buffer, kBlack);
             uiFinish();
 
-            return yield();
+            yield();
         }
     } else if (_protoState == kFinished)
         return finishedLoop();

@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#define LOG_DEBUG
 #define SD_SCK 2
 #define SD_MISO 1
 #define SD_MOSI 3
@@ -46,21 +47,26 @@ int logPrintf(const char* format, ...) {
     va_list list;
     va_start(list, format);
 
-    char buffer[1024];
-    int res = vsnprintf(buffer, sizeof(buffer) / sizeof(char), format, list);
+    int res;
 
     // Imprime no Serial como fallback, caso a inicialização tenha falhado
     if (_file) {
-        _file.print(buffer);
+        res = _file.vprintf(format, list);
     } else if (Serial) {
         Serial.print("[hal/log.hh] ");
-        Serial.print(buffer);
+        res = Serial.vprintf(format, list);
     }
 
     va_end(list);
 
     return res;
 }
+
+#ifdef LOG_DEBUG
+#define logDebugPrintf(format, ...) logPrintf(format, __VA_ARGS__)
+#else
+#define logDebugPrintf(format, ...) 0
+#endif
 
 /// Finaliza o datalogger, salvando os dados do arquivo.
 void logClose() {
