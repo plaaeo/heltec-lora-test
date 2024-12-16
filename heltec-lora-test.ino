@@ -70,6 +70,7 @@ void setup() {
 
     // Tentar inicializar o logger no cartão SD
     _hasSD = logInit("/log.txt");
+    logPrintf("Modulo iniciado");
 }
 
 /// Atualiza os parâmetros atuais do teste de acordo com o índice do teste
@@ -281,11 +282,16 @@ void syncLoop() {
 }
 
 const char* _resultMessage = "(...)";
+
+/// Variáveis de timing, usadas para desenhar a barra de progresso na UI.
 int64_t _nextAlarm = 0;
 uint64_t _currentPeriod = 1;
 int64_t _operationBegin = 0;
 int64_t _operationEnd = 0;
 int64_t _timedEnd = 0;
+
+/// Setada com "true" quando a função `timedLoop` estourar seu budget máximo de tempo.
+bool _timerLatch = false;
 
 /// Executa o experimento principal para o receptor e transmissor.
 ///
@@ -372,6 +378,7 @@ void timedLoop() {
     }
 
     _timedEnd = timerTime();
+    _timerLatch |= (_timedEnd - _operationBegin) > _currentPeriod;
 
     // Imprimir informações de timing para debugging
     logDebugPrintf(
@@ -430,6 +437,16 @@ void loop() {
 
             // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
             uiLoop();
+
+            // Parar o experimento caso o usuário aperte o botão durante a transmissão.
+            if (uiEmergencyStop()) {
+                Serial.println("Parando...");
+                logClose();
+                timerStop();
+                _protoState = kFinished;
+                return;
+            }
+
             uiClear();
             drawTestOverlay(NULL, _role == kRx, false);
             uiAlign(kLeft);
@@ -467,7 +484,7 @@ void loop() {
             uiRect(5 + pctFunctionEnd * barWidth, 15,
                    (pctNow - pctFunctionEnd) * barWidth, 14, kDither, kWhite);
 
-            uiText(10, 15, _resultMessage);
+            uiText(10, 15, _timerLatch ? "(desync!)" : _resultMessage);
 
             uiAlign(kRight);
 

@@ -52,6 +52,11 @@ bool uiSelectNext() {
     return moved;
 }
 
+/// Retorna `true` caso o botão esteja atualmente apertado.
+bool uiButtonState() {
+    return _btnState;
+}
+
 /// Retorna `true` caso o usuário tenha pedido para selecionar
 /// o elemento anterior.
 bool uiSelectPrev() {

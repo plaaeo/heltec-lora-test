@@ -9,7 +9,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define LOG_DEBUG
+// #define LOG_DEBUG
+
 #define SD_MISO 1
 #define SD_SCK 2
 #define SD_MOSI 3
