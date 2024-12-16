@@ -99,8 +99,8 @@ bool radioInit() {
     if (!_radio.begin(SS, RST_LoRa, BUSY_LoRa, DIO0, -1, -1))
         return false;
 
-    _radio.setDio3TcxoCtrl(SX126X_DIO3_OUTPUT_1_8, SX126X_TCXO_DELAY_10);
-    _radio.setRegulator(SX126X_REGULATOR_LDO);
+    _radio.setDio3TcxoCtrl(SX126X_DIO3_OUTPUT_1_8, SX126X_TCXO_DELAY_5);
+    _radio.setRegulator(SX126X_REGULATOR_DC_DC);
     _radio.setFrequency(915000000);
     _radio.standby(SX126X_STANDBY_XOSC);
     _radio.setFallbackMode(SX126X_FALLBACK_STDBY_XOSC);
@@ -128,8 +128,7 @@ radio_error_t radioSend(const uint8_t* message, uint8_t size,
 
     // Aguarda o pacote ser enviado completamente, ou demore demais e cause um
     // timeout.
-    if (!_radio.wait())
-        return kTimeout;
+    while (_radio.status() == LORA_STATUS_TX_WAIT);
 
     uint8_t status = _radio.status();
     return _radioConvertError(status);
@@ -142,7 +141,8 @@ radio_error_t radioSend(const uint8_t* message, uint8_t size,
 radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
     timeout = radioCalculateTimeout(timeout);
     _radio.request(timeout >> 6);
-    _radio.wait();
+
+    while (_radio.status() == LORA_STATUS_RX_WAIT);
 
     uint8_t status = _radio.status();
     radio_error_t error = _radioConvertError(status);
@@ -162,8 +162,6 @@ radio_error_t radioRecv(uint8_t* dest, uint8_t* length, uint64_t timeout = 0) {
     _radio.purge(recvLength - *length);
 
     status = _radio.status();
-
-    _radio.standby(SX126X_STANDBY_XOSC);
     return _radioConvertError(status);
 }
 
@@ -216,18 +214,20 @@ float radioSNR() {
 /// Atualiza os parâmetros do radiotransmissor.
 void radioSetParameters(radio_parameters_t& param) {
     _radio.setFrequency(param.frequency * 1000000);
-    _radio.setTxPower(param.power, SX126X_TX_POWER_SX1262);
-    _radio.setSyncWord(param.syncWord);
+
+    _radio.setLoRaModulation(param.sf, param.bandwidth * 1000, param.cr,
+                             radioHasLDRO(param));
+
     _radio.setLoRaPacket(param.packetLength == 0 ? SX126X_HEADER_EXPLICIT
                                                  : SX126X_HEADER_IMPLICIT,
                          param.preambleLength, param.packetLength, param.crc,
                          param.invertIq);
 
+    _radio.setTxPower(param.power, SX126X_TX_POWER_SX1262);
     _radio.setRxGain(param.boostedRxGain ? SX126X_RX_GAIN_BOOSTED
                                          : SX126X_RX_GAIN_POWER_SAVING);
 
-    _radio.setLoRaModulation(param.sf, param.bandwidth * 1000, param.cr,
-                             radioHasLDRO(param));
-
+    _radio.setSyncWord(param.syncWord);
     _radio.standby(SX126X_STANDBY_XOSC);
+    _radio.setFallbackMode(SX126X_FALLBACK_STDBY_XOSC);
 }

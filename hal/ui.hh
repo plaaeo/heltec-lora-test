@@ -17,6 +17,8 @@ enum alignment_t { kLeft, kCenter, kRight };
 
 SSD1306Wire display(0x3c, SDA_OLED, SCL_OLED, GEOMETRY_128_64);
 
+enum color_t { kWhite, kBlack, kInvert };
+
 static struct {
     /// Determina o índice do item selecionado atualmente.
     uint32_t selection;
@@ -33,6 +35,21 @@ static struct {
     /// Determina o alinhamento utilizado para os itens da interface atualmente.
     alignment_t alignment;
 } _uiState;
+
+/// Define a cor do próximo elemento.
+void uiSetColor(color_t color) {
+    switch (color) {
+    case kWhite:
+        display.setColor(WHITE);
+        break;
+    case kBlack:
+        display.setColor(BLACK);
+        break;
+    case kInvert:
+        display.setColor(INVERSE);
+        break;
+    }
+}
 
 /// Determina o alinhamento dos próximos itens a serem desenhados na interface.
 void uiAlign(alignment_t align) {
@@ -105,13 +122,14 @@ int16_t uiAlignX(int16_t x, int16_t w = 0) {
 
 /// Desenha uma caixa de item selecionável na interface de usuário.
 /// Caso este item tenha sido pressionado no último frame, retorna `true`.
-bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
+bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h,
+            color_t selectedColor = kInvert) {
     bool selected = _uiState.selection == _uiState.nextItem;
 
     if (selected) {
         // Desenha caixa em volta do item preenchido
         x = uiAlignX(x, w);
-        display.setColor(WHITE);
+        uiSetColor(selectedColor);
         display.fillRect(x, y, w, h);
     }
 
@@ -122,8 +140,8 @@ bool uiItem(int16_t x, int16_t y, uint16_t w, uint16_t h) {
 }
 
 /// Desenha um texto na interface de usuário.
-void uiText(int16_t x, int16_t y, const String& text) {
-    display.setColor(INVERSE);
+void uiText(int16_t x, int16_t y, const String& text, color_t color = kInvert) {
+    uiSetColor(color);
 
     // Alinhar horizontalmente
     int16_t w = display.getStringWidth(text);
@@ -136,7 +154,8 @@ void uiText(int16_t x, int16_t y, const String& text) {
 
 /// Desenha um botão com o texto dado.
 /// Caso este botão tenha sido pressionado no último frame, retorna `true`.
-bool uiButton(int16_t x, int16_t y, const String& text) {
+bool uiButton(int16_t x, int16_t y, const String& text,
+              color_t selectedColor = kInvert) {
     int16_t w = display.getStringWidth(text);
 
     bool pressed = uiItem(x, y, w + 2, 10);
@@ -151,15 +170,44 @@ bool uiButton(int16_t x, int16_t y, const String& text) {
         break;
     }
 
-    uiText(x, y - 2, text);
+    uiText(x, y - 2, text, selectedColor);
 
     return pressed;
 }
 
+enum rect_type_t {
+    kFill,
+    kStroke,
+    kDither,
+};
+
+/// Desenha um retângulo na interface.
+void uiRect(int16_t x, int16_t y, uint16_t w, uint16_t h,
+            rect_type_t type = kFill, color_t color = kInvert) {
+    x = uiAlignX(x, w);
+    uiSetColor(color);
+
+    switch (type) {
+    case kFill:
+        display.fillRect(x, y, w, h);
+        break;
+    case kStroke:
+        display.drawRect(x, y, w, h);
+        break;
+    case kDither:
+        for (uint16_t yo = 0; yo < h; yo++) {
+            for (uint16_t xo = 0; xo < w / 2; xo++) {
+                display.setPixel(x + (2 * xo) + (yo % 2), y + yo);
+            }
+        }
+        break;
+    }
+}
+
 /// Desenha uma checkbox na interface.
-void uiCheckbox(int16_t x, int16_t y, bool filled) {
+void uiCheckbox(int16_t x, int16_t y, bool filled, color_t color = kInvert) {
     x = uiAlignX(x, 8);
-    display.setColor(INVERSE);
+    uiSetColor(color);
     display.drawRect(x, y, 8, 8);
 
     if (filled)

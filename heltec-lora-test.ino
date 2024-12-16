@@ -6,15 +6,21 @@
 #include "hal/ui.hh"
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
-/// processamento além do experimento principal
-#define BUDGET 140000
+/// processamento além do experimento principal.
+#define BUDGET 120000
+
+/// Ao receber mensagens em parâmetros com mensagens demoradas, o receptor
+/// possui um delay variável, cuja fonte não pude verificar ainda. Nos
+/// parâmetros mais demorados, com 62.5kHz e SF12, o delay máximo reportado foi
+/// de 50-60ms, mas em geral parece ser +-3% do time on air.
+#define RX_TIMING_ERROR 50800
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
-#define TX_DELAY 60000
+#define TX_DELAY (RX_TIMING_ERROR + 4000)
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 1
+#define MESSAGES_PER_TEST 2
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "Mensagem!";
@@ -34,15 +40,15 @@ uint32_t _testsLost = 0;
 /// Os parâmetros iniciais serão utilizados na sincronização inicial
 /// dos dispositivos.
 radio_parameters_t _parameters = radio_parameters_t {
-    .power = 23,
+    .power = 22,
     .frequency = 915.0,
-    .preambleLength = 8,
+    .preambleLength = 12,
     .bandwidth = 62.5,
     .sf = 12,
     .cr = 8,
     .crc = true,
     .invertIq = false,
-    .boostedRxGain = true,
+    .boostedRxGain = false,
     .packetLength = 0,
     .syncWord = 0xAE,
 };
@@ -257,14 +263,6 @@ void syncLoop() {
         return;
     }
 
-    // Esperar `TX_DELAY` microsegundos do budget do transmissor
-    // para garantir que os receptores começam a receber antes do
-    // transmissor começar a enviar.
-    if (_role == kTx) {
-        uint32_t start = micros();
-        while (micros() - start < TX_DELAY);
-    }
-
     // Atualizar parâmetros do teste e iniciar o experimento.
     _currentTest = message[0];
     updateTestParameters();
@@ -272,13 +270,19 @@ void syncLoop() {
     const auto totalBudget =
         radioTransmitTime(_parameters, _messageLength) + BUDGET;
 
-    timerStart(totalBudget, timedLoop);
+    // Esperar `TX_DELAY` microsegundos do budget do transmissor
+    // para garantir que os receptores começam a receber antes do
+    // transmissor começar a enviar.
+    timerStart(totalBudget + (_role == kTx ? TX_DELAY : 0), timedLoop);
+    timerResync(totalBudget);
 
     _begin = timerTime();
     _protoState = kRunning;
 }
 
 const char* _resultMessage = "(...)";
+int64_t _nextAlarm = 0;
+uint64_t _currentPeriod = 1;
 int64_t _operationBegin = 0;
 int64_t _operationEnd = 0;
 int64_t _timedEnd = 0;
@@ -289,6 +293,9 @@ int64_t _timedEnd = 0;
 /// Desta forma, o receptor e o transmissor se mantém sincronizados durante
 /// o experimento.
 void timedLoop() {
+    _nextAlarm = timerNextTick();
+    _currentPeriod = timerPeriod();
+
     const uint64_t toa = radioTransmitTime(_parameters, _messageLength);
     radio_error_t error = kNone;
 
@@ -298,16 +305,13 @@ void timedLoop() {
         uint8_t message[_messageLength];
         uint8_t length = _messageLength;
 
-        // O receptor espera o `TX_DELAY` + 100ms para compensar quaisquer delay
-        // vindo da biblioteca RadioLib, somado com possíveis inconsistências no
-        // timing devido à execução de código do display e cartão SD entre as
-        // operações LoRa.
-        //
-        // Note que essas inconsistências não implicam na dessincronização dos
-        // timers, visto que a resincronização é feita no callback do timer para
-        // garantir o mínimo erro.
+        // O timeout do receptor é interrompido após o receptor detectar o
+        // header completo de um pacote. Por isso, o timeout usado no
+        // experimento é o time on air de um pacote de tamanho 0 (simulando o
+        // tempo de transmissão do header) + 5% desse tempo para compensar os
+        // erros de timing do receptor (leia `RX_TIMING_ERROR` acima)
         error = radioRecv(message, &length,
-                          (1.3 * radioTransmitTime(_parameters, 0)) + TX_DELAY);
+                          radioTransmitTime(_parameters, 0) * 1.05);
         _operationEnd = timerTime();
 
         logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
@@ -409,8 +413,8 @@ void loop() {
     else if (_protoState == kRunning) {
         static uint32_t _renderFrame = 0;
 
-        // Renderizar a cada 8 execuções do `loop`
-        if (_renderFrame++ == 8) {
+        // Renderizar a cada 4 execuções do `loop`
+        if (_renderFrame++ == 4) {
             _renderFrame = 0;
 
             // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
@@ -419,20 +423,46 @@ void loop() {
             drawTestOverlay(NULL, _role == kRx, false);
             uiAlign(kLeft);
 
-            uiText(5, 15, _resultMessage);
+            // Imprimir uma barra de progresso com as atividades executadas
+            // entre os timeouts do timer.
+            const int16_t barWidth = 128 - 10;
+            uiRect(5, 15, barWidth, 14, kStroke, kWhite);
 
             // Imprimir o restante do budget até o próximo timer
             int64_t now = timerTime();
             int64_t nextTick = timerNextTick();
             uint64_t period = timerPeriod();
 
+            double pctOpBegin = (_begin - _begin) / (double)(_currentPeriod);
+            double pctOpEnd =
+                (_operationEnd - _operationBegin) / (double)(_currentPeriod);
+            double pctFunctionEnd =
+                (_timedEnd - _operationBegin) / (double)(_currentPeriod);
+            double pctNow =
+                (timerTime() - _operationBegin) / (double)(_currentPeriod);
+
+            pctNow = min(pctNow, 1.0);
+
+            // Barra branca expressando o tempo total consumido pela
+            // função `timedLoop`
+            uiRect(5 + pctOpBegin * barWidth, 15,
+                   (pctFunctionEnd - pctOpBegin) * barWidth, 14, kFill, kWhite);
+
+            // Barra semi-branca expressando o tempo total consumido esperando.
+            uiRect(5 + pctFunctionEnd * barWidth, 15,
+                   (pctNow - pctFunctionEnd) * barWidth, 14, kDither, kWhite);
+
+            uiText(10, 15, _resultMessage);
+
             uiAlign(kRight);
 
             char buffer[256];
             printMinimalPeriod(buffer, 256, period - (nextTick - now), period);
 
-            uiText(5, 15, buffer);
+            uiText(10, 15, buffer, kBlack);
             uiFinish();
+
+            return yield();
         }
     } else if (_protoState == kFinished)
         return finishedLoop();
