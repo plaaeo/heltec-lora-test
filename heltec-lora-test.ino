@@ -5,10 +5,6 @@
 #include "hal/timer.hh"
 #include "hal/ui.hh"
 
-/// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
-/// processamento além do experimento principal.
-#define BUDGET 140000
-
 /// Ao receber mensagens em parâmetros com mensagens demoradas, o receptor
 /// possui um delay variável, cuja fonte não pude verificar ainda. Nos
 /// parâmetros mais demorados, com 62.5kHz e SF12, o delay máximo reportado foi
@@ -18,9 +14,13 @@
 /// O delay aguardado antes de iniciar o relógio do transmissor
 #define TX_DELAY (RX_TIMING_ERROR + 8000)
 
+/// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
+/// processamento além do experimento principal.
+#define BUDGET TX_DELAY + 100000
+
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 3
+#define MESSAGES_PER_TEST 50
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "Mensagem!";
@@ -425,7 +425,7 @@ void loop() {
         static uint32_t _renderFrame = 0;
 
         // Renderizar a cada 4 execuções do `loop`
-        if (!radioBusy() && _renderFrame++ == 4) {
+        if (!radioBusy() && _renderFrame++ == 12) {
             _renderFrame = 0;
 
             // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
@@ -476,9 +476,9 @@ void loop() {
 
             uiText(10, 15, buffer, kBlack);
             uiFinish();
-
-            yield();
         }
+
+        yield();
     } else if (_protoState == kFinished)
         return finishedLoop();
 }

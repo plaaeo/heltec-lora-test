@@ -10,8 +10,8 @@
 #include <stdio.h>
 
 #define LOG_DEBUG
-#define SD_SCK 2
 #define SD_MISO 1
+#define SD_SCK 2
 #define SD_MOSI 3
 #define SD_CS 4
 
@@ -52,6 +52,7 @@ int logPrintf(const char* format, ...) {
     // Imprime no Serial como fallback, caso a inicialização tenha falhado
     if (_file) {
         res = _file.vprintf(format, list);
+        _file.flush();
     } else if (Serial) {
         Serial.print("[hal/log.hh] ");
         res = Serial.vprintf(format, list);
