@@ -7,20 +7,20 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal.
-#define BUDGET 120000
+#define BUDGET 140000
 
 /// Ao receber mensagens em parâmetros com mensagens demoradas, o receptor
 /// possui um delay variável, cuja fonte não pude verificar ainda. Nos
 /// parâmetros mais demorados, com 62.5kHz e SF12, o delay máximo reportado foi
 /// de 50-60ms, mas em geral parece ser +-3% do time on air.
-#define RX_TIMING_ERROR 50800
+#define RX_TIMING_ERROR 54800
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
-#define TX_DELAY (RX_TIMING_ERROR + 4000)
+#define TX_DELAY (RX_TIMING_ERROR + 8000)
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
-#define MESSAGES_PER_TEST 2
+#define MESSAGES_PER_TEST 3
 
 /// A mensagem enviada durante o experimento.
 const uint8_t _message[] = "Mensagem!";
@@ -42,13 +42,13 @@ uint32_t _testsLost = 0;
 radio_parameters_t _parameters = radio_parameters_t {
     .power = 22,
     .frequency = 915.0,
-    .preambleLength = 12,
+    .preambleLength = 8,
     .bandwidth = 62.5,
     .sf = 12,
     .cr = 8,
     .crc = true,
     .invertIq = false,
-    .boostedRxGain = false,
+    .boostedRxGain = true,
     .packetLength = 0,
     .syncWord = 0xAE,
 };
@@ -234,6 +234,9 @@ uint64_t _begin = 0;
 void syncLoop() {
     uiLoop();
 
+    // Inicializar parâmetros padrão de transmissão
+    radioSetParameters(_parameters);
+
     // Desenhar interface antes da operação LoRa
     uiClear();
     drawTestOverlay(NULL, _role == kRx, true);
@@ -241,9 +244,6 @@ void syncLoop() {
     uiAlign(kCenter);
     uiText(0, 15, _role == kRx ? "Esperando sync..." : "Enviando sync...");
     uiFinish();
-
-    // Inicializar parâmetros padrão de transmissão
-    radioSetParameters(_parameters);
 
     radio_error_t error = kNone;
     uint8_t message[] = { _currentTest };
@@ -311,7 +311,8 @@ void timedLoop() {
         // tempo de transmissão do header) + 5% desse tempo para compensar os
         // erros de timing do receptor (leia `RX_TIMING_ERROR` acima)
         error = radioRecv(message, &length,
-                          radioTransmitTime(_parameters, 0) * 1.05);
+                          TX_DELAY - RX_TIMING_ERROR +
+                              radioTransmitTime(_parameters, 0) * 1.2);
         _operationEnd = timerTime();
 
         logPrintf("%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%u\n",
