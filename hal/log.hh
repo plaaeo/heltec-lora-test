@@ -9,7 +9,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-// #define LOG_DEBUG
+#define LOG_DEBUG
 
 #define SD_MISO 1
 #define SD_SCK 2
@@ -25,7 +25,7 @@ bool logInit(const char* filename) {
     _spiSd.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
 
     // Inicializar biblioteca do SD
-    if (!SD.begin(SD_CS, _spiSd)) {
+    if (!SD.begin(SD_CS, _spiSd, 40000000)) {
         Serial.println(
             "[hal/log.hh] Não foi possível inicializar o datalogger.");
         return false;
@@ -53,9 +53,7 @@ int logPrintf(const char* format, ...) {
     // Imprime no Serial como fallback, caso a inicialização tenha falhado
     if (_file) {
         res = _file.vprintf(format, list);
-        _file.flush();
     } else if (Serial) {
-        Serial.print("[hal/log.hh] ");
         res = Serial.vprintf(format, list);
     }
 
@@ -64,8 +62,16 @@ int logPrintf(const char* format, ...) {
     return res;
 }
 
+/// Escreve os dados do buffer escritos usando `logPrintf` no arquivo.
+bool logFlush() {
+    if (_file)
+        _file.flush();
+
+    return false;
+}
+
 #ifdef LOG_DEBUG
-#define logDebugPrintf(format, ...) logPrintf(format, __VA_ARGS__)
+#define logDebugPrintf(format, ...) Serial.printf(format, __VA_ARGS__)
 #else
 #define logDebugPrintf(format, ...) 0
 #endif

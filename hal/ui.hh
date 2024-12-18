@@ -196,8 +196,9 @@ void uiRect(int16_t x, int16_t y, uint16_t w, uint16_t h,
         break;
     case kDither:
         for (uint16_t yo = 0; yo < h; yo++) {
-            for (uint16_t xo = 0; xo < w / 2; xo++) {
-                display.setPixel(x + (2 * xo) + (yo % 2), y + yo);
+            for (uint16_t xo = 0; xo < w; xo++) {
+                if (xo % 2 != 1 || yo % 2 != 1)
+                    display.setPixel(x + xo, y + yo);
             }
         }
         break;

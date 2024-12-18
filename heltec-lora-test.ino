@@ -16,7 +16,11 @@
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal.
-#define BUDGET TX_DELAY + 100000
+#define BUDGET TX_DELAY + 80000
+
+/// A quantidade de tempo, em microsegundos, reservado apenas para escrita no
+/// cartão SD.
+#define SD_BUDGET 2000000
 
 /// Define a quantidade de mensagens enviadas para cada combinação de
 /// parâmetros.
@@ -68,9 +72,7 @@ void setup() {
     timerInit();
     uiSetup();
 
-    // Tentar inicializar o logger no cartão SD
-    _hasSD = logInit("/log.txt");
-    logPrintf("Modulo iniciado");
+    logPrintf("Modulo iniciado\n");
 }
 
 /// Atualiza os parâmetros atuais do teste de acordo com o índice do teste
@@ -233,6 +235,9 @@ uint64_t _begin = 0;
 
 /// Executa após um cargo ser selecionado no menu.
 void syncLoop() {
+    // Tentar inicializar o logger no cartão SD
+    _hasSD = logInit("/log.txt");
+
     uiLoop();
 
     // Inicializar parâmetros padrão de transmissão
@@ -275,7 +280,7 @@ void syncLoop() {
     // para garantir que os receptores começam a receber antes do
     // transmissor começar a enviar.
     timerStart(totalBudget + (_role == kTx ? TX_DELAY : 0), timedLoop);
-    timerResync(totalBudget);
+    timerResync(totalBudget, timedLoop);
 
     _begin = timerTime();
     _protoState = kRunning;
@@ -290,8 +295,21 @@ int64_t _operationBegin = 0;
 int64_t _operationEnd = 0;
 int64_t _timedEnd = 0;
 
-/// Setada com "true" quando a função `timedLoop` estourar seu budget máximo de tempo.
+/// Setada com "true" quando a função `timedLoop` estourar seu budget máximo de
+/// tempo.
 bool _timerLatch = false;
+
+struct msg_result_t {
+    int64_t time;
+    uint8_t message[_messageLength];
+    uint8_t length;
+    int16_t rssi;
+    float snr;
+    radio_error_t error;
+};
+
+/// Armazena o resultado de cada mensagem em um teste.
+msg_result_t _results[MESSAGES_PER_TEST];
 
 /// Executa o experimento principal para o receptor e transmissor.
 ///
@@ -303,40 +321,37 @@ void timedLoop() {
     _currentPeriod = timerPeriod();
 
     const uint64_t toa = radioTransmitTime(_parameters, _messageLength);
+    const uint64_t totalBudget = toa + BUDGET;
+
     radio_error_t error = kNone;
 
     _operationBegin = timerTime();
-    if (_role == kRx) {
-        // Receber mensagem e imprimir status da operação no Serial
-        uint8_t message[_messageLength];
-        uint8_t length = _messageLength;
 
+    // Armazenar dados iniciais da mensagem atual
+    msg_result_t& result = _results[_messageIndex];
+    result.time = _operationBegin;
+    result.length = _messageLength;
+
+    if (_role == kRx) {
         // O timeout do receptor é interrompido após o receptor detectar o
         // header completo de um pacote. Por isso, o timeout usado no
         // experimento é o time on air de um pacote de tamanho 0 (simulando o
         // tempo de transmissão do header) + 5% desse tempo para compensar os
         // erros de timing do receptor (leia `RX_TIMING_ERROR` acima)
-        error = radioRecv(message, &length,
+        error = radioRecv(result.message, &result.length,
                           TX_DELAY - RX_TIMING_ERROR +
                               radioTransmitTime(_parameters, 0) * 1.2);
-        _operationEnd = timerTime();
-
-        logPrintf(
-            "%llu,%u,%u,%hhd dB,SF%hhu,CR%hhu,%f kHz,%hi dBm,%f dB,%.*s,%u\n",
-            timerTime() - _begin, _currentTest, _messageIndex,
-            _parameters.power, _parameters.sf, _parameters.cr,
-            _parameters.bandwidth, radioRSSI(), radioSNR(), length,
-            (size_t)message, error);
     } else if (_role == kTx) {
         // Enviar mensagem e imprimir status da transmissão no Serial
         error = radioSend(_message, _messageLength);
-        _operationEnd = timerTime();
-
-        logPrintf("%llu,%u,%u,%hhu dB,SF%hhu,CR%hhu,%f kHz,%u\n",
-                  timerTime() - _begin, _currentTest, _messageIndex,
-                  _parameters.power, _parameters.sf, _parameters.cr,
-                  _parameters.bandwidth, error);
     }
+
+    _operationEnd = timerTime();
+
+    // Armazenar resultados do teste na memória
+    result.error = error;
+    result.rssi = radioRSSI();
+    result.snr = radioSNR();
 
     // Atualizar mensagem no display com erro apropriado
     switch (error) {
@@ -361,20 +376,10 @@ void timedLoop() {
 
     _messageIndex++;
 
-    // Iniciar nova linha de testes após `MESSAGES_PER_TEST` mensagens
+    // Iniciar período de escrita do cartão SD após a mensagem final do
+    // parâmetro atual.
     if (_messageIndex == MESSAGES_PER_TEST) {
-        _messageIndex = 0;
-        _currentTest++;
-
-        // Marcar o timer para resincronização e iniciar próximo teste
-        _protoState = updateTestParameters() ? kFinished : kRunning;
-        timerResync(radioTransmitTime(_parameters, _messageLength) + BUDGET);
-
-        // Finalizar log do receptor após o último teste
-        if (_protoState == kFinished) {
-            logClose();
-            timerStop();
-        }
+        timerResync(SD_BUDGET, sdLoop);
     }
 
     _timedEnd = timerTime();
@@ -387,6 +392,79 @@ void timedLoop() {
         _operationBegin, _operationEnd, _timedEnd,
         (_operationEnd - _operationBegin) - toa, (_timedEnd - _operationEnd),
         toa, _currentPeriod, _nextAlarm);
+}
+
+/// Armazena os dados no vetor `_results` no cartão SD.
+void sdLoop() {
+    _nextAlarm = timerNextTick();
+    _currentPeriod = timerPeriod();
+    _operationBegin = timerTime();
+
+    _resultMessage = "(escrevendo...)";
+
+    // Imprimir rótulo dos dados na primeira combinação
+    if (_currentTest == 0) {
+        if (_role == kRx) {
+            logPrintf(
+                "Time (µs),Parameter Index,Message Index,Tx Power "
+                "(dBm),Spreading Factor,Coding Rate,Bandwidth (kHz),RSSI "
+                "(dBm),SNR (dB),Status,Message\n");
+        } else {
+            logPrintf(
+                "Time (µs),Parameter Index,Message Index,Tx Power "
+                "(dBm),Spreading Factor,Coding Rate,Bandwidth (kHz),Status\n");
+        }
+    }
+
+    for (size_t i = 0; i < MESSAGES_PER_TEST; i++) {
+        const msg_result_t& result = _results[i];
+
+        if (_role == kRx) {
+            // Imprimir todas as informações para resultados do receptor
+            logPrintf("%llu,%u,%u,%hhd,%hhu,%hhu,%f,%hi,%f,%u,", result.time,
+                      _currentTest, i, _parameters.power, _parameters.sf,
+                      _parameters.cr, _parameters.bandwidth, result.rssi,
+                      result.snr, result.error);
+
+            for (size_t i = 0; i < result.length; i++) {
+                logPrintf("%02x", result.message[i]);
+            }
+
+            logPrintf("\n");
+        } else if (_role == kTx) {
+            // Imprimir poucas informações para o transmissor (não possui
+            // RSSI/SNR)
+            logPrintf("%llu,%u,%u,%hhu,%hhu,%hhu,%f,%u\n", result.time,
+                      _currentTest, i, _parameters.power, _parameters.sf,
+                      _parameters.cr, _parameters.bandwidth, result.error);
+        }
+    }
+
+    logFlush();
+
+    // Resetar parâmetros de teste
+    _messageIndex = 0;
+    _currentTest++;
+
+    // Marcar o timer para resincronização e iniciar próximo teste
+    _protoState = updateTestParameters() ? kFinished : kRunning;
+    timerResync(radioTransmitTime(_parameters, _messageLength) + BUDGET,
+                timedLoop);
+
+    // Finalizar log do receptor após o último teste
+    if (_protoState == kFinished) {
+        logClose();
+        timerStop();
+    }
+
+    _operationEnd = _timedEnd = timerTime();
+    _timerLatch |= (_timedEnd - _operationBegin) > _currentPeriod;
+
+    // Imprimir informações de timing para debugging
+    logDebugPrintf(
+        "%lld,%lld,%lld / budget_used: %lld, period: %llu, alarm: %lld\n",
+        _operationBegin, _operationEnd, _timedEnd,
+        (_timedEnd - _operationBegin), _currentPeriod, _nextAlarm);
 }
 
 /// Executa quando todos os testes forem finalizados.
@@ -438,8 +516,9 @@ void loop() {
             // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
             uiLoop();
 
-            // Parar o experimento caso o usuário aperte o botão durante a transmissão.
-            if (uiEmergencyStop()) {
+            // Parar o experimento caso o usuário aperte o botão durante a
+            // transmissão.
+            if (uiButtonState()) {
                 Serial.println("Parando...");
                 logClose();
                 timerStop();
@@ -480,11 +559,12 @@ void loop() {
             uiRect(5 + pctOpBegin * barWidth, 15,
                    (pctFunctionEnd - pctOpBegin) * barWidth, 14, kFill, kWhite);
 
-            // Barra semi-branca expressando o tempo total consumido esperando.
+            // Barra semi-transparente expressando o tempo total consumido
+            // esperando.
             uiRect(5 + pctFunctionEnd * barWidth, 15,
                    (pctNow - pctFunctionEnd) * barWidth, 14, kDither, kWhite);
 
-            uiText(10, 15, _timerLatch ? "(desync!)" : _resultMessage);
+            uiText(10, 15, _timerLatch ? "(desync!)" : _resultMessage, kBlack);
 
             uiAlign(kRight);
 

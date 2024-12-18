@@ -13,16 +13,26 @@ using timer_handler_fn = void (*)(void);
 /// A task do FreeRTOS que lida com o timeout do timer.
 TaskHandle_t _timerTask = NULL;
 
+/// Função do usuário, definida em `timerStart` e `timerResync`
+timer_handler_fn _timerUserFn = NULL;
+
 volatile esp_timer_handle_t _timerHandle;
 
 // Define o próximo período do timer, depois do próximo timeout.
 volatile uint64_t _timerNextPeriod = 0;
+timer_handler_fn _timerNextUserFn = NULL;
 
 /// Chamado quando o tempo definido no timer passar.
-void _timerCallback(void* _arg) {
+void _timerCallback(void* _) {
     if (_timerNextPeriod > 0) {
         esp_timer_restart(_timerHandle, _timerNextPeriod);
         _timerNextPeriod = 0;
+        
+        // Muda o callback do usuário caso necessário.
+        if (_timerNextUserFn) {
+            _timerUserFn = _timerNextUserFn;
+            _timerNextUserFn = NULL;
+        }
     }
 
     // Notifica a task para executar o callback do usuario.
@@ -30,12 +40,12 @@ void _timerCallback(void* _arg) {
 }
 
 // Executa o callback do usuario apos ser notificado.
-void _timerHandlerTask(void* fn) {
+void _timerHandlerTask(void* _) {
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // Executa a função de timeout do usuario.
-        ((timer_handler_fn)fn)();
+        (_timerUserFn)();
         yield();
     }
 }
@@ -59,20 +69,23 @@ void timerInit() {
 void timerStart(uint64_t micro, timer_handler_fn fn) {
     if (_timerTask != NULL)
         vTaskDelete(_timerTask);
+    
+    _timerUserFn = fn;
 
     // Cria uma task no mesmo nucleo que a funcao foi executada.
     // A task irá esperar o próximo timeout do timer e executará
     // a função do usuário.
-    xTaskCreate(_timerHandlerTask, "timer_handler", 8192, (void*)fn,
-                tskIDLE_PRIORITY + 10, &_timerTask);
+    xTaskCreatePinnedToCore(_timerHandlerTask, "timer_handler", 8192, NULL,
+                tskIDLE_PRIORITY + 10, &_timerTask, xPortGetCoreID());
 
     ESP_ERROR_CHECK(esp_timer_start_periodic(_timerHandle, micro));
 }
 
 /// Marca o timer para resincronização. No próximo tick do timer, o timeout irá
 /// mudar para o valor especificado.
-void timerResync(uint64_t micro) {
+void timerResync(uint64_t micro, timer_handler_fn fn) {
     _timerNextPeriod = micro;
+    _timerNextUserFn = fn;
 }
 
 /// Retorna o tempo atual no timer.
