@@ -9,14 +9,14 @@
 /// possui um delay variável, cuja fonte não pude verificar ainda. Nos
 /// parâmetros mais demorados, com 62.5kHz e SF12, o delay máximo reportado foi
 /// de 50-60ms, mas em geral parece ser +-3% do time on air.
-#define RX_TIMING_ERROR 54800
+#define RX_TIMING_ERROR 55000
 
 /// O delay aguardado antes de iniciar o relógio do transmissor
 #define TX_DELAY (RX_TIMING_ERROR + 8000)
 
 /// A quantidade de tempo, em microsegundos, disponibilizado para qualquer
 /// processamento além do experimento principal.
-#define BUDGET TX_DELAY + 80000
+#define BUDGET (TX_DELAY + 80000)
 
 /// A quantidade de tempo, em microsegundos, reservado apenas para escrita no
 /// cartão SD.
@@ -27,7 +27,7 @@
 #define MESSAGES_PER_TEST 50
 
 /// A mensagem enviada durante o experimento.
-const uint8_t _message[] = "Mensagem!";
+uint8_t _message[] = "XMensagem";
 const uint8_t _messageLength = sizeof(_message) / sizeof(char);
 bool _hasSD = false;
 
@@ -78,7 +78,7 @@ void setup() {
 /// Atualiza os parâmetros atuais do teste de acordo com o índice do teste
 /// atual. Retorna `true` se o índice do teste era inválido.
 bool updateTestParameters() {
-    const uint8_t power[] = { 5, 14, 22 };
+    const uint8_t power[] = { 5, 10, 17, 22 };
     const uint8_t sf[] = { 7, 8, 9, 10, 11, 12 };
     const uint8_t cr[] = { 5, 8 };
     const float bw[] = { 62.5, 125.0, 250.0 };
@@ -227,6 +227,7 @@ enum protocol_state_t {
     kUninitialized,
     kRunning,
     kFinished,
+    kPing,
 };
 
 protocol_state_t _protoState = kUninitialized;
@@ -300,7 +301,11 @@ int64_t _timedEnd = 0;
 bool _timerLatch = false;
 
 struct msg_result_t {
-    int64_t time;
+    int64_t startTime;
+    int64_t loraEndTime;
+    int64_t endTime;
+    int64_t period;
+    int64_t nextAlarm;
     uint8_t message[_messageLength];
     uint8_t length;
     int16_t rssi;
@@ -329,24 +334,28 @@ void timedLoop() {
 
     // Armazenar dados iniciais da mensagem atual
     msg_result_t& result = _results[_messageIndex];
-    result.time = _operationBegin;
     result.length = _messageLength;
+    result.startTime = _operationBegin;
+    result.nextAlarm = _nextAlarm;
+    result.period = _currentPeriod;
+    _message[0] = _messageIndex;
 
     if (_role == kRx) {
-        // O timeout do receptor é interrompido após o receptor detectar o
-        // header completo de um pacote. Por isso, o timeout usado no
-        // experimento é o time on air de um pacote de tamanho 0 (simulando o
-        // tempo de transmissão do header) + 5% desse tempo para compensar os
-        // erros de timing do receptor (leia `RX_TIMING_ERROR` acima)
-        error = radioRecv(result.message, &result.length,
-                          TX_DELAY - RX_TIMING_ERROR +
-                              radioTransmitTime(_parameters, 0) * 1.2);
+        // Usamos o ToA do pacote completo como o timeout para a recepção.
+        // Note que o timeout do receptor é interrompido após o receptor
+        // detectar o header completo de um pacote, logo, caso um pacote seja
+        // detectado no final deste timeout, o processo de recepção de um pacote
+        // pode ultrapassar o budget de tempo máximo pra função `timedLoop`.
+        error = radioRecv(
+            result.message, &result.length,
+            radioTransmitTime(_parameters, _messageLength) + TX_DELAY);
     } else if (_role == kTx) {
         // Enviar mensagem e imprimir status da transmissão no Serial
         error = radioSend(_message, _messageLength);
     }
 
     _operationEnd = timerTime();
+    result.loraEndTime = _operationEnd;
 
     // Armazenar resultados do teste na memória
     result.error = error;
@@ -384,6 +393,7 @@ void timedLoop() {
 
     _timedEnd = timerTime();
     _timerLatch |= (_timedEnd - _operationBegin) > _currentPeriod;
+    result.endTime = _timedEnd;
 
     // Imprimir informações de timing para debugging
     logDebugPrintf(
@@ -406,12 +416,14 @@ void sdLoop() {
     if (_currentTest == 0) {
         if (_role == kRx) {
             logPrintf(
-                "Time (µs),Parameter Index,Message Index,Tx Power "
+                "Start Time,Rx End Time,End Time,Period,Alarm,Parameter "
+                "Index,Message Index,Tx Power "
                 "(dBm),Spreading Factor,Coding Rate,Bandwidth (kHz),RSSI "
                 "(dBm),SNR (dB),Status,Message\n");
         } else {
             logPrintf(
-                "Time (µs),Parameter Index,Message Index,Tx Power "
+                "Start Time,Tx End Time,End Time,Period,Alarm,Parameter "
+                "Index,Message Index,Tx Power "
                 "(dBm),Spreading Factor,Coding Rate,Bandwidth (kHz),Status\n");
         }
     }
@@ -421,10 +433,12 @@ void sdLoop() {
 
         if (_role == kRx) {
             // Imprimir todas as informações para resultados do receptor
-            logPrintf("%llu,%u,%u,%hhd,%hhu,%hhu,%f,%hi,%f,%u,", result.time,
-                      _currentTest, i, _parameters.power, _parameters.sf,
-                      _parameters.cr, _parameters.bandwidth, result.rssi,
-                      result.snr, result.error);
+            logPrintf(
+                "%llu,%llu,%llu,%llu,%llu,%u,%u,%hhd,%hhu,%hhu,%f,%hi,%f,%u,",
+                result.startTime, result.loraEndTime, result.endTime,
+                result.period, result.nextAlarm, _currentTest, i,
+                _parameters.power, _parameters.sf, _parameters.cr,
+                _parameters.bandwidth, result.rssi, result.snr, result.error);
 
             for (size_t i = 0; i < result.length; i++) {
                 logPrintf("%02x", result.message[i]);
@@ -434,11 +448,16 @@ void sdLoop() {
         } else if (_role == kTx) {
             // Imprimir poucas informações para o transmissor (não possui
             // RSSI/SNR)
-            logPrintf("%llu,%u,%u,%hhu,%hhu,%hhu,%f,%u\n", result.time,
-                      _currentTest, i, _parameters.power, _parameters.sf,
-                      _parameters.cr, _parameters.bandwidth, result.error);
+            logPrintf("%llu,%llu,%llu,%llu,%llu,%u,%u,%hhu,%hhu,%hhu,%f,%u\n",
+                      result.startTime, result.loraEndTime, result.endTime,
+                      result.period, result.nextAlarm, _currentTest, i,
+                      _parameters.power, _parameters.sf, _parameters.cr,
+                      _parameters.bandwidth, result.error);
         }
     }
+
+    // Resetar vetor de resultados
+    memset(_results, 0, sizeof(_results));
 
     logFlush();
 
@@ -477,6 +496,73 @@ void finishedLoop() {
     uiFinish();
 }
 
+/// Executa um simples loop, em que um receptor contínuamente recebe
+/// mensagens de um transmissor no mesmo parâmetro.
+void pingLoop() {
+    static radio_error_t error = kUnknown;
+
+    uiLoop();
+
+    // Inicializar parâmetros de ping
+    radioSetParameters({
+        .power = 22,
+        .frequency = 915.0,
+        .preambleLength = 8,
+        .bandwidth = 62.5,
+        .sf = 12,
+        .cr = 8,
+        .crc = true,
+        .invertIq = false,
+        .boostedRxGain = false,
+        .packetLength = 0,
+        .syncWord = 0xEE,
+    });
+
+    // Desenhar interface antes da operação LoRa
+    uiClear();
+    drawTestOverlay(NULL, _role == kRx, true);
+
+    const char* statusText;
+    switch (error) {
+    case kNone:
+        statusText = "(ok)";
+        break;
+    case kTimeout:
+        statusText = "(t.out)";
+        break;
+    case kHeader:
+    case kCrc:
+        statusText = "(crc/h)";
+        break;
+    default:
+        statusText = "(n/a)";
+        break;
+    }
+
+    // Desenhar status do ping
+    char buffer[256] = { 0 };
+    snprintf(buffer, 256, "%s %s",
+             _role == kRx ? "Esperando ping..." : "Enviando ping...",
+             statusText);
+
+    uiAlign(kCenter);
+    uiText(0, 15, buffer);
+    uiFinish();
+
+    uint8_t message[] = { _currentTest };
+    uint8_t length = sizeof(message) / sizeof(uint8_t);
+
+    // Enviar/receber ping dependendo do cargo selecionado
+    if (_role == kRx) {
+        error = radioRecv(message, &length, 5000000);
+        _currentTest = message[0];
+    } else if (_role == kTx) {
+        _currentTest++;
+        error = radioSend(message, length);
+        delay(1000);
+    }
+}
+
 void loop() {
     halLoop();
 
@@ -490,11 +576,21 @@ void loop() {
         drawTestOverlay("Selecione o cargo", false, false);
         uiAlign(kCenter);
 
-        if (uiButton(-30, 30, "Transmissor"))
+        if (uiButton(-30, 20, "Transmissor"))
             _role = kTx;
 
-        if (uiButton(30, 30, "Receptor"))
+        if (uiButton(30, 20, "Receptor"))
             _role = kRx;
+
+        if (uiButton(-30, 30, "Tx. Ping")) {
+            _protoState = kPing;
+            _role = kTx;
+        }
+
+        if (uiButton(30, 30, "Rx. Ping")) {
+            _protoState = kPing;
+            _role = kRx;
+        }
 
         uiFinish();
 
@@ -506,6 +602,8 @@ void loop() {
 
     if (_protoState == kUninitialized)
         return syncLoop();
+    else if (_protoState == kPing)
+        return pingLoop();
     else if (_protoState == kRunning) {
         static uint32_t _renderFrame = 0;
 
@@ -513,11 +611,12 @@ void loop() {
         if (!radioBusy() && _renderFrame++ == 12) {
             _renderFrame = 0;
 
-            // Desenhar interface, exibindo o RSSI e SNR apenas para o receptor
+            // Desenhar interface, exibindo o RSSI e SNR apenas para o
+            // receptor
             uiLoop();
 
-            // Parar o experimento caso o usuário aperte o botão durante a
-            // transmissão.
+            // Parar o experimento caso o usuário aperte o botão durante
+            // a transmissão.
             if (uiButtonState()) {
                 Serial.println("Parando...");
                 logClose();
@@ -530,8 +629,8 @@ void loop() {
             drawTestOverlay(NULL, _role == kRx, false);
             uiAlign(kLeft);
 
-            // Imprimir uma barra de progresso com as atividades executadas
-            // entre os timeouts do timer.
+            // Imprimir uma barra de progresso com as atividades
+            // executadas entre os timeouts do timer.
             const int16_t barWidth = 128 - 10;
             uiRect(5, 15, barWidth, 14, kStroke, kWhite);
 
@@ -559,8 +658,8 @@ void loop() {
             uiRect(5 + pctOpBegin * barWidth, 15,
                    (pctFunctionEnd - pctOpBegin) * barWidth, 14, kFill, kWhite);
 
-            // Barra semi-transparente expressando o tempo total consumido
-            // esperando.
+            // Barra semi-transparente expressando o tempo total
+            // consumido esperando.
             uiRect(5 + pctFunctionEnd * barWidth, 15,
                    (pctNow - pctFunctionEnd) * barWidth, 14, kDither, kWhite);
 

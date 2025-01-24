@@ -180,10 +180,9 @@ float radioSNR() {
 }
 
 /// Atualiza os parâmetros do radiotransmissor.
-void radioSetParameters(radio_parameters_t& param) {
+void radioSetParameters(const radio_parameters_t& param) {
     _radio.autoLDRO();
     _radio.setOutputPower(param.power);
-    _radio.setFrequency(param.frequency);
     _radio.setBandwidth(param.bandwidth);
     _radio.setSpreadingFactor(param.sf);
     _radio.setCodingRate(param.cr);
@@ -199,4 +198,5 @@ void radioSetParameters(radio_parameters_t& param) {
 
     _radio.invertIQ(param.invertIq);
     _radio.setSyncWord(param.syncWord);
+    _radio.setFrequency(param.frequency);
 }
